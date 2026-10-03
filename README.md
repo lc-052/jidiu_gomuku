@@ -160,8 +160,6 @@ server/
 └── package-lock.json
 ```
 
-> ⚠️ `server/node_modules/` 不要提交/上传，在服务器上 `npm install` 生成即可（仓库 `.gitignore` 已忽略）。
-> 之后更新服务器代码：传新的 `index.js` 覆盖 → `pm2 restart gomuku-server`。
 
 ---
 
