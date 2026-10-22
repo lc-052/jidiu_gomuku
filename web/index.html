@@ -1,46 +1,78 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
-
   <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="寄丢棋室：五子棋与围棋">
-
-  <!-- iOS meta tags & icons -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#fffdf3">
+  <meta name="description" content="寄丢棋室：五子棋与围棋，支持人机和在线对战">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="寄丢棋室">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
-
-  <title>寄丢棋室</title>
+  <link rel="icon" type="image/png" href="favicon.png">
   <link rel="manifest" href="manifest.json">
+  <title>寄丢棋室</title>
+  <style>
+    html,body{margin:0;background:#fffdf3;color:#38352f;font-family:system-ui,"Microsoft YaHei",sans-serif}
+    #startup{position:fixed;inset:0;z-index:10000;display:grid;place-items:center;padding:24px;background:#fffdf3}
+    .welcome{box-sizing:border-box;width:min(100%,360px);text-align:center;padding:36px 28px;border:1px solid #e0d5bf;border-radius:28px;background:#f1e5d0}
+    .welcome img{width:80px;height:80px;border-radius:22px}
+    h1{font-size:26px;font-weight:600;margin:20px 0 8px}
+    .intro{font-size:14px;color:#6e6252;margin:0 0 28px}
+    #startup-status{font-size:14px;line-height:1.7;margin:14px 0}
+    .progress{height:4px;background:#ddcfb7;border-radius:4px;overflow:hidden}
+    .progress:after{content:"";display:block;width:35%;height:100%;background:#957035;animation:loading 1.3s ease-in-out infinite}
+    .welcome.failed .progress{display:none}
+    button{border:0;border-radius:24px;padding:12px 24px;background:#795923;color:#fff;cursor:pointer;font:inherit;margin-top:8px}
+    button[hidden]{display:none}
+    @keyframes loading{from{transform:translateX(-110%)}to{transform:translateX(390%)}}
+    @media(prefers-reduced-motion:reduce){.progress:after{animation:none;width:100%}}
+  </style>
 </head>
 <body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
-
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
-  <script src="flutter_bootstrap.js" async></script>
+  <div id="startup">
+    <main class="welcome">
+      <img src="icons/Icon-192.png" alt="寄丢棋室图标" width="80" height="80">
+      <h1>寄丢棋室</h1>
+      <p class="intro">五子棋与围棋，随时来一局</p>
+      <div class="progress" aria-hidden="true"></div>
+      <p id="startup-status" role="status" aria-live="polite">正在加载棋室…</p>
+      <button id="startup-retry" type="button" hidden>重新加载</button>
+    </main>
+  </div>
+  <noscript>请启用 JavaScript 后打开棋室。</noscript>
+  <script>
+    (() => {
+      const overlay=document.getElementById('startup');
+      const status=document.getElementById('startup-status');
+      const retry=document.getElementById('startup-retry');
+      let complete=false, failed=false;
+      const slowTimer=setTimeout(()=>{
+        if(!complete&&!failed){status.textContent='首次加载需要下载棋盘资源，请稍候…';retry.hidden=false;}
+      },12000);
+      const timeout=setTimeout(()=>fail(new Error('Startup timeout')),60000);
+      function fail(error){
+        if(complete||failed)return;
+        failed=true;clearTimeout(slowTimer);clearTimeout(timeout);
+        console.error('Jidiu startup failed:',error);
+        overlay.querySelector('.welcome').classList.add('failed');
+        status.textContent='棋室未能加载，请检查网络后重试。';
+        retry.hidden=false;
+      }
+      function onRejection(event){fail(event.reason);}
+      function onError(event){fail(event.error||event.message);}
+      retry.addEventListener('click',()=>location.reload());
+      window.addEventListener('unhandledrejection',onRejection);
+      window.addEventListener('error',onError);
+      window.addEventListener('flutter-first-frame',()=>{
+        complete=true;clearTimeout(slowTimer);clearTimeout(timeout);
+        window.removeEventListener('unhandledrejection',onRejection);
+        window.removeEventListener('error',onError);
+        overlay.remove();
+      },{once:true});
+      window.jidiuStartup={update(text){if(!failed)status.textContent=text;},fail};
+    })();
+  </script>
+  <script src="flutter_bootstrap.js" async onerror="window.jidiuStartup.fail(new Error('Bootstrap download failed'))"></script>
 </body>
 </html>

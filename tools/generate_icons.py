@@ -2,6 +2,7 @@ from pathlib import Path
 from PIL import Image
 root=Path(__file__).resolve().parents[1]
 image=Image.open(root/'assets/icon/app_icon.png').convert('RGB')
+image.resize((192,192),Image.Resampling.LANCZOS).save(root/'assets/icon/app_logo.png',optimize=True)
 for base in ['android/app/src/main/res','ios/Runner/Assets.xcassets/AppIcon.appiconset','macos/Runner/Assets.xcassets/AppIcon.appiconset','web']:
     for p in (root/base).rglob('*.png'):
         if p.name.startswith(('ic_launcher','Icon-','app_icon')) or p.name=='favicon.png':

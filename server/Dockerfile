@@ -2,7 +2,7 @@ FROM node:24-alpine
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
-COPY --chown=node:node index.js game_rules.js ./
+COPY --chown=node:node index.js game_rules.js web_assets.js ./
 USER node
 ENV NODE_ENV=production PORT=3000
 EXPOSE 3000

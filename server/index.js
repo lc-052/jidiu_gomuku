@@ -2,7 +2,7 @@
 const express=require('express');
 const http=require('http');
 const path=require('path');
-const fs=require('fs');
+const {mountWeb}=require('./web_assets');
 const {randomInt}=require('crypto');
 const {Server}=require('socket.io');
 const {GameRules,other}=require('./game_rules');
@@ -10,16 +10,7 @@ function createGameServer(options={}) {
   const app=express(),server=http.createServer(app);
   app.get('/health',(_,res)=>res.json({status:'ok',protocol:2,games:['gomoku','go'],uptime:process.uptime()}));
   const webRoot=options.webRoot||process.env.WEB_ROOT||path.join(__dirname,'web');
-  if(fs.existsSync(path.join(webRoot,'index.html'))) {
-    app.use(express.static(webRoot,{setHeaders(res,file) {
-      // Deploy updates immediately instead of retaining an old app entry point.
-      if(/\.(html|js|json)$/.test(file)) res.setHeader('Cache-Control','no-cache');
-    }}));
-    app.get('*',(req,res,next)=>{
-      if(req.path.startsWith('/socket.io')||path.extname(req.path)) return next();
-      res.sendFile(path.join(webRoot,'index.html'));
-    });
-  }
+  mountWeb(app,webRoot);
   const io=new Server(server,{cors:{origin:'*',methods:['GET','POST']},maxHttpBufferSize:8192,pingTimeout:20000,pingInterval:25000});
   const rooms=new Map(),players=new Map();
   function error(socket,message) {socket.emit('errorMsg',{message,sender:'系统'});}

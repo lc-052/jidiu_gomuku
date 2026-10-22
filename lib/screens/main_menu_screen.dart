@@ -103,7 +103,7 @@ class _WelcomeCard extends StatelessWidget {
         ClipRRect(
             borderRadius: BorderRadius.circular(24),
             child:
-                Image.asset('assets/icon/app_icon.png', width: 80, height: 80)),
+                Image.asset('assets/icon/app_logo.png', width: 80, height: 80)),
         const SizedBox(width: 16),
         Expanded(
             child:

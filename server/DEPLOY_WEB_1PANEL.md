@@ -13,7 +13,9 @@
 双方访问同一网站、选择相同棋种，建房、分享房间码、准备即可对局。
 之前手动保存过服务器地址的浏览器，会保留原设置；必要时在大厅改为当前网站地址。
 
-网页渲染资源已本地打包。房间保存在内存里，重启服务或断线后需要重新进房开局。
+网页渲染资源及常用中文字体已本地打包；部署包和镜像构建时会预生成 Gzip / Brotli，服务按浏览器支持的编码自动发送压缩文件。HTTP 访问通常使用 Gzip，HTTPS 浏览器也可使用 Brotli。缓存以 ETag 重新验证，未变化资源返回 304。
+
+首页提供加载状态、超时提示与重试按钮。房间保存在内存里，重启服务或断线后需要重新进房开局。
 
 有域名后，可以在 1Panel 建立反向代理并配置 HTTPS。需要转发 WebSocket Upgrade，
 而且 OpenResty 容器中的 127.0.0.1 不是宿主机地址；代理目标必须在其所在网络可达。
@@ -34,5 +36,6 @@ docker compose -f /opt/1panel/docker/compose/jidiu-qishi/docker-compose.yml up -
 
 - 端口占用：用 `docker ps --filter publish=3000` 查找旧容器，确认不再使用后停止；也可将映射改成 `3001:3000`，容器内部 PORT 保持 3000。
 - 公网无法访问：先检查 `curl http://127.0.0.1:3000/health`，再检查服务器防火墙与云安全组是否放行对应端口。
-- 白屏且 CanvasKit 返回 500：查看容器日志。若报 `EACCES`，确认 Dockerfile 在 `COPY web/` 后、`USER node` 前包含 `RUN chmod -R a+rX /app/web`，然后重新构建。新版部署包已经包含该修复。
+- 白屏且 CanvasKit 返回 500：查看容器日志。若报 `EACCES`，确认 Dockerfile 在 `COPY web/` 后、`USER node` 前包含网页资源的 `chmod -R a+rX /app/web`，然后重新构建。新版部署包已经包含该修复。
+- 排查加载速度：浏览器 Network 中检查 main.dart.js 和 canvaskit.wasm，首次响应应包含 Content-Encoding: gzip（或 br）；正常刷新时未变化资源可以返回 304。开发者工具勾选 Disable cache 会强制重新下载。
 - 更新后页面仍旧：按 Ctrl + Shift + R 强制刷新。渲染资源使用本地 CanvasKit，无需访问外部渲染资源 CDN。

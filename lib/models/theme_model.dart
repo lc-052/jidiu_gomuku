@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 /// Five quiet Material 3 palettes, including matching board colors.
 class ThemePalette {
@@ -71,6 +72,7 @@ class ThemePalette {
           : Color.lerp(darkCard, primaryColor, .15),
     );
     return ThemeData(
+      fontFamily: kIsWeb ? 'JidiuSans' : null,
       useMaterial3: true,
       colorScheme: scheme,
       scaffoldBackgroundColor: scheme.surface,

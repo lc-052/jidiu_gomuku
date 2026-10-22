@@ -13,6 +13,7 @@ App 默认连接 `http://101.37.85.166:3000`，也可在联机大厅修改。
 
 - index.js
 - game_rules.js
+- web_assets.js
 - package.json
 - package-lock.json
 - Dockerfile

@@ -25,9 +25,14 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  fonts:
+    - family: JidiuSans
+      fonts:
+        - asset: assets/fonts/JidiuSans-Regular.otf
   assets:
     - assets/
     - assets/icon/
+    - assets/fonts/OFL.txt
 
 flutter_launcher_icons:
   image_path: "assets/icon/app_icon.png"

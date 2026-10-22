@@ -35,10 +35,12 @@ class StorageService {
   /// 重复调用不会产生额外开销（内部已做幂等处理）
   static Future<void> init() async {
     try {
-      _prefs ??= await SharedPreferences.getInstance();
+      _prefs ??= await SharedPreferences.getInstance()
+          .timeout(const Duration(seconds: 4));
     } catch (e) {
       print('[StorageService] 初始化失败: $e');
-      throw Exception('无法初始化 SharedPreferences: $e');
+      // Storage failure must not prevent the application from rendering.
+      // Getters retain their defaults and optional writes become no-ops.
     }
   }
 
