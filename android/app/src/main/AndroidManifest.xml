@@ -2,7 +2,7 @@
     <!-- release 包必须由主清单声明网络权限（debug 变体由模板自动注入，release 不会） -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="寄丢五子棋"
+        android:label="寄丢棋室"
         android:name="${applicationName}"
         android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher">

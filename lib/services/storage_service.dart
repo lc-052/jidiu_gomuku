@@ -1,5 +1,7 @@
 // ignore_for_file: avoid_print
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import '../models/game_state.dart';
 import '../models/theme_model.dart';
 
@@ -41,6 +43,12 @@ class StorageService {
   }
 
   // ---------- 主题设置 ----------
+  ThemeMode get themeMode =>
+      ThemeMode.values[(_prefs?.getInt('theme_mode') ?? 0).clamp(0, 2)];
+
+  Future<void> saveThemeMode(ThemeMode mode) async {
+    await _prefs?.setInt('theme_mode', mode.index);
+  }
 
   /// 获取当前选择的主题索引
   /// 自动钳制到合法范围，防止旧数据越界导致 UI 崩溃
@@ -164,7 +172,13 @@ class StorageService {
 
   /// 获取上次使用的服务器地址（IP 或域名）
   String get serverIp {
-    return _prefs?.getString(_keyServerIp) ?? '192.168.1.1';
+    const configured = String.fromEnvironment('GAME_SERVER_URL');
+    final fallback = configured.isNotEmpty
+        ? configured
+        : kIsWeb && ['http', 'https'].contains(Uri.base.scheme)
+            ? Uri.base.origin
+            : 'http://101.37.85.166:3000';
+    return _prefs?.getString(_keyServerIp) ?? fallback;
   }
 
   /// 保存服务器地址

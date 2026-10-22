@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.jidiu" "\0"
-            VALUE "FileDescription", "gomuku" "\0"
+            VALUE "FileDescription", "寄丢棋室" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "gomuku" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.jidiu. All rights reserved." "\0"
             VALUE "OriginalFilename", "gomuku.exe" "\0"
-            VALUE "ProductName", "gomuku" "\0"
+            VALUE "ProductName", "寄丢棋室" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

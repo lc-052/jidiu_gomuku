@@ -20,8 +20,8 @@ void main() {
         ),
       );
 
-  testWidgets('含棋子的棋盘渲染不抛出绘制异常（6 套主题逐一验证）', (tester) async {
-    for (int theme = 0; theme < 6; theme++) {
+  testWidgets('含棋子的棋盘渲染不抛出绘制异常（5 套主题逐一验证）', (tester) async {
+    for (int theme = 0; theme < 5; theme++) {
       await tester.pumpWidget(wrap(BoardWidget(
         board: sampleBoard(),
         gameState: GameState.playing,

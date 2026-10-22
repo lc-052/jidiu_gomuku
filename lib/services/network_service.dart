@@ -1,7 +1,11 @@
 // ignore_for_file: avoid_print
+import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as io;
+import 'server_address.dart';
 
 import '../models/game_state.dart';
+import '../models/game_kind.dart';
+import '../models/online_room_state.dart';
 
 /// 网络服务：基于 Socket.IO 实现五子棋在线对战功能。
 /// 负责 WebSocket 连接管理、房间操作、走棋同步、聊天和异常处理。
@@ -28,9 +32,17 @@ class NetworkService {
 
   /// 内部连接状态标志（兼容 getter 只读限制）
   bool _isConnected = false;
+  bool _registered = false;
+  OnlineRoomState? latestState;
+  GameKind roomKind = GameKind.gomoku;
+  GameKind? expectedKind;
+  int roomSize = 15;
+  void Function(OnlineRoomState state)? onState;
+  void Function(String message)? onRoomClosed;
+  Completer<bool>? _connection;
 
   /// 连接是否已建立
-  bool get isConnected => _socket?.connected ?? _isConnected;
+  bool get isConnected => (_socket?.connected ?? _isConnected) && _registered;
 
   /// 是否已创建或加入房间
   bool get hasRoom => roomId != null;
@@ -117,37 +129,46 @@ class NetworkService {
 
   /// 连接到 WebSocket 服务端
   /// 设置所有事件监听器，等待服务器响应
-  Future<bool> connect() async {
+  Future<bool> connect({Duration timeout = const Duration(seconds: 10)}) async {
+    if (isConnected) return true;
+    if (_connection != null) return _connection!.future;
+    final pending = Completer<bool>();
+    _connection = pending;
     try {
-      if (isConnected) return true;
-
-      // hostIp 支持 "IP" 或 "IP:端口" 两种写法；不写端口时默认 3000
-      final url = serverUrlOverride ??
-          (hostIp.contains(':') ? 'http://$hostIp' : 'http://$hostIp:3000');
+      final url = parseServerAddress(serverUrlOverride ??
+              (serverUrl != 'http://localhost' ? serverUrl : hostIp))
+          .toString();
+      _socket?.dispose();
+      _registered = false;
 
       _socket = io.io(
         url,
         <String, dynamic>{
           'transports': ['websocket'],
-          'autoConnect': true,
+          'autoConnect': false,
+          'forceNew': true,
           'timeout': 10000, // 10秒超时
         },
       );
 
       // 配置全局事件监听器
       _setupListeners();
-
-      // 等待首次连接确认
-      await Future.delayed(const Duration(milliseconds: 2000));
-      if (isConnected) {
-        // 自动注册
-        _socket?.emit('register', {'name': playerName ?? '玩家'});
-      }
-
-      return isConnected;
+      _socket!.connect();
+      return await pending.future.timeout(timeout, onTimeout: () {
+        if (!pending.isCompleted) pending.complete(false);
+        _socket?.dispose();
+        _socket = null;
+        _registered = false;
+        _isConnected = false;
+        _onErrorInternal('连接超时，请检查地址、端口和服务器状态', 'Network');
+        return false;
+      });
     } catch (e) {
+      if (!pending.isCompleted) pending.complete(false);
       _onErrorInternal('连接失败: $e', 'Network');
       return false;
+    } finally {
+      if (identical(_connection, pending)) _connection = null;
     }
   }
 
@@ -163,31 +184,79 @@ class NetworkService {
     // 连接成功
     _socket!.on('connect', (_) {
       _isConnected = true;
+      _registered = false;
       // 断线重连后服务端按新的 socketId 识别玩家，
       // 必须重发注册，否则后续建房/落子指令会被服务器静默丢弃
       _socket?.emit('register', {'name': playerName ?? '玩家'});
-      onConnected?.call();
     });
 
     // 连接断开
     _socket!.on('disconnect', (_) {
       _isConnected = false;
+      _registered = false;
+      resetRoomState();
+      if (_connection != null && !_connection!.isCompleted) {
+        _connection!.complete(false);
+      }
       onDisconnected?.call();
     });
 
     // 注册成功（服务器回传规范化的玩家名）
     _socket!.on('registered', (data) {
       try {
+        if (data['protocol'] != 2) {
+          if (_connection != null && !_connection!.isCompleted) {
+            _connection!.complete(false);
+          }
+          _socket?.disconnect();
+          _onErrorInternal('服务端版本过旧，请部署新版棋室服务', 'Server');
+          return;
+        }
         final name = data['name']?.toString();
         if (name != null && name.isNotEmpty) playerName = name;
+        _registered = true;
+        if (_connection != null && !_connection!.isCompleted) {
+          _connection!.complete(true);
+        }
+        onConnected?.call();
       } catch (_) {
         // 忽略解析失败，不影响后续流程
       }
     });
 
+    _socket!.on('state', (data) {
+      try {
+        final state =
+            OnlineRoomState.fromJson(Map<String, dynamic>.from(data as Map));
+        if (latestState != null &&
+            latestState!.roomId == state.roomId &&
+            state.revision <= latestState!.revision) {
+          return;
+        }
+        latestState = state;
+        roomKind = state.kind;
+        roomSize = state.size;
+        yourTurn = state.phase == 'playing' && state.current == myColor;
+        onState?.call(state);
+      } catch (_) {
+        _onErrorInternal('无法读取服务器棋局，请返回大厅重连', 'Server');
+      }
+    });
+    _socket!.on('roomClosed', (data) {
+      roomId = null;
+      yourTurn = false;
+      onRoomClosed?.call(data['message']?.toString() ?? '房间已关闭，请返回大厅');
+    });
+
+    _socket!.on('connect_error', (error) {
+      _onErrorInternal('连接失败，请检查服务器地址与端口：$error', 'Network');
+    });
+
     // 房间创建成功（用于导航到对战场面）
     _socket!.on('roomCreated', (data) {
       try {
+        roomKind = data['kind'] == 'go' ? GameKind.go : GameKind.gomoku;
+        roomSize = data['size'] as int? ?? 15;
         final rid = data['roomId']?.toString() ?? '';
         if (rid.isNotEmpty) {
           roomId = rid;
@@ -205,6 +274,8 @@ class NetworkService {
     // 加入房间成功（服务器向加入者定向发送）
     _socket!.on('roomJoined', (data) {
       try {
+        roomKind = data['kind'] == 'go' ? GameKind.go : GameKind.gomoku;
+        roomSize = data['size'] as int? ?? 15;
         final rid = data['roomId']?.toString() ?? '';
         if (rid.isNotEmpty) {
           roomId = rid;
@@ -434,6 +505,10 @@ class NetworkService {
       // 忽略断开过程中的错误
     } finally {
       _isConnected = false;
+      _registered = false;
+      if (_connection != null && !_connection!.isCompleted) {
+        _connection!.complete(false);
+      }
       resetRoomState();
     }
   }
@@ -444,6 +519,7 @@ class NetworkService {
     opponentColor = null;
     opponentName = null;
     yourTurn = false;
+    latestState = null;
   }
 
   // ---------- 房间操作 ----------
@@ -452,16 +528,22 @@ class NetworkService {
   /// [name] 房间名称
   /// [playerColor] 选择的执子颜色
   /// 成功时通过回调通知，失败时触发 onError 回调
-  void createRoom(String name, {Player playerColor = Player.black}) {
+  void createRoom(String name,
+      {Player playerColor = Player.black,
+      GameKind kind = GameKind.gomoku,
+      int? size}) {
     try {
       if (!isConnected) {
         _onErrorInternal('未连接到服务器', 'Network');
         return;
       }
       setMyColor(playerColor);
+      latestState = null;
       _socket!.emit('createRoom', <String, dynamic>{
         'roomName': name,
         'playerColor': playerColor == Player.black ? 'black' : 'white',
+        'kind': kind == GameKind.go ? 'go' : 'gomoku',
+        'size': size ?? (kind == GameKind.go ? 9 : 15),
       });
     } catch (e) {
       _onErrorInternal('创建房间失败: $e', 'Network');
@@ -479,6 +561,8 @@ class NetworkService {
       _socket!.emit('joinRoom', <String, dynamic>{
         'roomId': roomId,
         'playerName': playerName ?? '无名棋手',
+        if (expectedKind != null)
+          'kind': expectedKind == GameKind.go ? 'go' : 'gomoku',
       });
     } catch (e) {
       _onErrorInternal('加入房间失败: $e', 'Network');
@@ -532,6 +616,17 @@ class NetworkService {
       _onErrorInternal('落子发送失败: $e', 'Network');
     }
   }
+
+  /// All state changes are validated by the server and followed by a snapshot.
+  void sendRoomAction(String event, [Map<String, dynamic> data = const {}]) {
+    if (!isConnected || roomId == null) {
+      _onErrorInternal('连接或房间已失效，请返回大厅', 'Network');
+      return;
+    }
+    _socket!.emit(event, {'roomId': roomId, ...data});
+  }
+
+  void requestState() => sendRoomAction('getState');
 
   /// 发送投降信号给服务器和对局对手
   void resign() {
@@ -630,6 +725,8 @@ class NetworkService {
   /// 解除本实例对上层的所有回调引用（页面弹出时调用，防止旧页面被回调唤醒）。
   /// 不会关闭 socket，连接由持有方（大厅）继续管理。
   void clearCallbacks() {
+    onState = null;
+    onRoomClosed = null;
     onMessage = null;
     onConnected = null;
     onDisconnected = null;

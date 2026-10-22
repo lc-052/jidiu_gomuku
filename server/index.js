@@ -1,546 +1,227 @@
-/**
- * 寄丢五子棋 - WebSocket 联机对战服务器
- * Gomoku Online Multiplayer Server
- *
- * 运行环境：Node.js >= 18
- * 端口：3000
- *
- * 协议（与 lib/services/network_service.dart 严格对齐）：
- *   客户端 → 服务器: register{name} / createRoom{roomName,playerColor} /
- *     joinRoom{roomId} / startGame / makeMove{row,col} / resign /
- *     chat{message} / undoRequest / undoReply{accept} / leaveRoom
- *   服务器 → 客户端: registered / roomCreated{roomId,roomName,yourColor} /
- *     roomJoined{roomId,yourColor,opponentName} / opponentJoined{name,color} /
- *     playerReady{name,color} / gameStarted{black,white,yourColor,yourTurn} /
- *     move{row,col,playerColor,placedBy,nextPlayer} /
- *     gameOver{winner,winnerColor,reason} / chatMessage{message,sender} /
- *     undoAsk{name} / undoAnswer{accept,reason} /
- *     undone{removed:[{row,col}],nextPlayer} / undoCancelled /
- *     errorMsg{message,sender} / opponentLeft{name} / opponentDisconnected{name}
- */
-
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const cors = require('cors');
-
-const expressApp = express();
-expressApp.use(cors());
-expressApp.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
-
-const server = http.createServer(expressApp);
-const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
-  pingTimeout: 60000,
-  pingInterval: 25000,
-});
-
-// ==================== Room State ====================
-// rooms: Map<roomId, { name, players[], board, currentPlayer, gameState }>
-const rooms = new Map();
-
-// players: Map<socketId, { name, roomId, color, ready }>
-const players = new Map();
-
-const BOARD_SIZE = 15;
-
-function emptyBoard() {
-  return Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(null));
-}
-
-// ==================== Event Handlers ====================
-
-io.on('connection', (socket) => {
-  console.log(`[INFO] Client connected: ${socket.id}`);
-
-  // 注册玩家
-  socket.on('register', ({ name }) => {
-    let playerName = (name || '').trim();
-    // “玩家”是客户端的默认占位名：双方同名会互相误挡对方的聊天消息，
-    // 这里给占位名加上 socket 后缀保证可区分
-    if (playerName === '' || playerName === '玩家') {
-      playerName = `玩家${socket.id.slice(0, 4)}`;
-    }
-    players.set(socket.id, { name: playerName, roomId: null, color: null, ready: false });
-    socket.emit('registered', { name: playerName, playerId: socket.id.slice(0, 8) });
-  });
-
-  // 创建房间
-  socket.on('createRoom', ({ roomName, playerColor }) => {
-    const player = players.get(socket.id);
-    if (!player) {
-      socket.emit('errorMsg', { message: '请先注册', sender: '系统' });
-      return;
-    }
-
-    // 6 位数字房间码（100000–999999），与现有房间冲突则重取
-    let roomId;
-    do {
-      roomId = String(Math.floor(100000 + Math.random() * 900000));
-    } while (rooms.has(roomId));
-    const color = (playerColor || 'black').toLowerCase() === 'white' ? 'white' : 'black';
-
-    const room = {
-      id: roomId,
-      name: (roomName || '').trim() || `对局 #${roomId}`,
-      players: [
-        { socketId: socket.id, name: player.name, color: color },
-      ],
-      board: emptyBoard(),
-      currentPlayer: 'black',
-      gameState: 'waiting', // waiting | playing | finished
-      history: [], // 本局落子记录 [{row,col,color}]，悔棋依据
-      pendingUndo: null, // 待答复的悔棋请求 {by,to,moves,historyLen}
-      createdAt: Date.now(),
-    };
-
-    rooms.set(roomId, room);
-    player.roomId = roomId;
-    player.color = color;
-
-    socket.join(roomId);
-    socket.emit('roomCreated', { roomId, roomName: room.name, yourColor: color });
-
-    console.log(`[ROOM] Created "${room.name}" (${roomId}) by ${player.name} [${color}]`);
-  });
-
-  // 加入房间（支持按房间 ID 或房间名称查找）
-  socket.on('joinRoom', ({ roomId }) => {
-    const player = players.get(socket.id);
-    if (!player) {
-      socket.emit('errorMsg', { message: '请先注册', sender: '系统' });
-      return;
-    }
-
-    // 如果已在其他房间，先按离开处理，避免旧房间残留幽灵玩家
-    if (player.roomId && rooms.has(player.roomId)) handleLeave(socket.id);
-
-    let room = rooms.get(roomId);
-    if (!room) {
-      room = [...rooms.values()].find(r => r.name === roomId);
-    }
-    if (!room) {
-      socket.emit('errorMsg', { message: '房间不存在', sender: '系统' });
-      return;
-    }
-
-    if (room.players.length >= 2) {
-      socket.emit('errorMsg', { message: '房间已满', sender: '系统' });
-      return;
-    }
-
-    if (room.gameState !== 'waiting') {
-      socket.emit('errorMsg', { message: '游戏已开始，无法加入', sender: '系统' });
-      return;
-    }
-
-    const color = room.players[0].color === 'black' ? 'white' : 'black';
-    room.players.push({ socketId: socket.id, name: player.name, color: color });
-
-    player.roomId = room.id;
-    player.color = color;
-
-    socket.join(room.id);
-
-    const opponent = room.players.find(p => p.socketId !== socket.id);
-
-    // 向加入者确认（携带房间信息与对手昵称，客户端据此导航）
-    socket.emit('roomJoined', {
-      roomId: room.id,
-      yourColor: color,
-      opponentName: opponent ? opponent.name : '对手',
+'use strict';
+const express=require('express');
+const http=require('http');
+const path=require('path');
+const fs=require('fs');
+const {randomInt}=require('crypto');
+const {Server}=require('socket.io');
+const {GameRules,other}=require('./game_rules');
+function createGameServer(options={}) {
+  const app=express(),server=http.createServer(app);
+  app.get('/health',(_,res)=>res.json({status:'ok',protocol:2,games:['gomoku','go'],uptime:process.uptime()}));
+  const webRoot=options.webRoot||process.env.WEB_ROOT||path.join(__dirname,'web');
+  if(fs.existsSync(path.join(webRoot,'index.html'))) {
+    app.use(express.static(webRoot,{setHeaders(res,file) {
+      // Deploy updates immediately instead of retaining an old app entry point.
+      if(/\.(html|js|json)$/.test(file)) res.setHeader('Cache-Control','no-cache');
+    }}));
+    app.get('*',(req,res,next)=>{
+      if(req.path.startsWith('/socket.io')||path.extname(req.path)) return next();
+      res.sendFile(path.join(webRoot,'index.html'));
     });
-
-    // 向房间内既有玩家定向通知对手加入
-    if (opponent) {
-      io.to(opponent.socketId).emit('opponentJoined', { name: player.name, color: color });
+  }
+  const io=new Server(server,{cors:{origin:'*',methods:['GET','POST']},maxHttpBufferSize:8192,pingTimeout:20000,pingInterval:25000});
+  const rooms=new Map(),players=new Map();
+  function error(socket,message) {socket.emit('errorMsg',{message,sender:'系统'});}
+  function snapshot(room) {
+    const g=room.game;
+    return {roomId:room.id,roomName:room.name,kind:g.kind,size:g.size,phase:room.phase,
+      board:g.board,currentPlayer:g.currentPlayer,passes:g.passes,captures:g.captures,
+      moveCount:g.history.length,lastMove:g.lastMove,dead:[...g.dead].map(p=>({row:Math.floor(p/g.size),col:p%g.size})),
+      players:room.players.map(id=>{const p=players.get(id);return {name:p.name,color:p.color,ready:p.ready};}),
+      confirmations:[...room.confirmations].map(id=>players.get(id)?.color).filter(Boolean),
+      score:room.phase==='scoring'||room.result?.reason==='score'?g.score():null,
+      winnerColor:room.result?.winnerColor??null,reason:room.result?.reason??null,
+      revision:room.revision,undoPending:!!room.pendingUndo};
+  }
+  function publish(room) {room.revision++;io.to(room.id).emit('state',snapshot(room));}
+  function cancelUndo(room,reason='stale') {
+    const pending=room.pendingUndo;if(!pending) return;
+    clearTimeout(pending.timer);room.pendingUndo=null;
+    io.to(pending.by).emit('undoAnswer',{accept:false,reason});
+    io.to(pending.to).emit('undoCancelled');
+  }
+  function finish(room,result) {
+    cancelUndo(room);room.phase='finished';room.result=result;
+    room.players.forEach(id=>{players.get(id).ready=false;});
+    io.to(room.id).emit('gameOver',result);publish(room);
+  }
+  function leave(socket,disconnected=false) {
+    const player=players.get(socket.id);if(!player) return;
+    const room=rooms.get(player.roomId);
+    if(room) {
+      cancelUndo(room,'left');socket.leave(room.id);
+      room.players=room.players.filter(id=>id!==socket.id);
+      if(room.players.length) {
+        const survivor=players.get(room.players[0]);
+        if(['playing','scoring'].includes(room.phase)) finish(room,{winner:survivor.name,winnerColor:survivor.color,reason:disconnected?'disconnected':'left'});
+        else {io.to(room.id).emit('opponentLeft',{name:player.name});}
+        // A departed opponent ends the room. Survivor must return to the lobby.
+        io.to(room.id).emit('roomClosed',{message:'对手已离开，请返回大厅重新建房'});
+        const survivorSocket=io.sockets.sockets.get(room.players[0]);
+        survivorSocket?.leave(room.id);survivor.roomId=null;survivor.ready=false;
+      }
+      rooms.delete(room.id);
     }
-
-    console.log(`[ROOM] ${player.name} joined "${room.name}" [${color}]`);
-  });
-
-  // 开始游戏（双方都按下准备后自动开局）
-  socket.on('startGame', () => {
-    const player = players.get(socket.id);
-    if (!player) return;
-    if (!player.roomId || !rooms.has(player.roomId)) {
-      socket.emit('errorMsg', { message: '房间已不存在，请返回大厅重新创建或加入', sender: '系统' });
-      return;
-    }
-
-    const room = rooms.get(player.roomId);
-    if (room.gameState === 'playing') return;
-    if (room.players.length < 2) {
-      socket.emit('errorMsg', { message: '等待对手进入房间', sender: '系统' });
-      return;
-    }
-
-    // 对局结束后双方在本页再按准备 → 重置棋盘，等待重新凑齐双方准备
-    if (room.gameState === 'finished') {
-      room.gameState = 'waiting';
-      room.board = emptyBoard();
-      room.currentPlayer = 'black';
-      room.history = [];
-      room.pendingUndo = null;
-      room.players.forEach((p) => {
-        const pl = players.get(p.socketId);
-        if (pl) pl.ready = false;
+    player.roomId=null;player.color=null;player.ready=false;
+  }
+  function member(socket) {
+    const player=players.get(socket.id),room=player&&rooms.get(player.roomId);
+    if(!room) throw Error('当前不在房间中，请返回大厅');
+    return {player,room};
+  }
+  function turn(socket) {
+    const state=member(socket);
+    if(state.room.phase!=='playing') throw Error('本局当前不能行棋');
+    if(state.room.game.currentPlayer!==state.player.color) throw Error('现在不是你的回合');
+    return state;
+  }
+  io.on('connection',socket=>{
+    let packets=0,windowStart=Date.now(),lastCreate=0;
+    socket.use((packet,next)=>{
+      if(Date.now()-windowStart>1000) {packets=0;windowStart=Date.now();}
+      if(++packets>50) {error(socket,'操作过于频繁，请稍后再试');return;}
+      next();
+    });
+    function on(event,handler) {
+      socket.on(event,(data={})=>{
+        try {
+          if(!data||typeof data!=='object'||Array.isArray(data)) throw Error('请求数据格式不正确');
+          handler(data);
+        } catch(e) {error(socket,e.message||'请求失败');}
       });
     }
-
-    player.ready = true;
-
-    const opponentEntry = room.players.find(p => p.socketId !== socket.id);
-    const opponent = opponentEntry ? players.get(opponentEntry.socketId) : null;
-
-    if (opponent) {
-      // 只通知对方“谁准备了”
-      io.to(opponentEntry.socketId).emit('playerReady', { name: player.name, color: player.color });
-    }
-
-    if (player.ready && opponent && opponent.ready) {
-      startRoom(room);
-    }
-  });
-
-  // 落子
-  socket.on('makeMove', ({ row, col }) => {
-    const player = players.get(socket.id);
-    if (!player || !player.roomId) return;
-
-    const room = rooms.get(player.roomId);
-    if (!room || room.gameState !== 'playing') return;
-
-    const r = Number(row), c = Number(col);
-    if (!Number.isInteger(r) || !Number.isInteger(c)) return;
-    if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE) return;
-    if (room.currentPlayer !== player.color) {
-      socket.emit('errorMsg', { message: '现在不是你的回合', sender: '系统' });
-      return;
-    }
-    if (room.board[r][c] !== null) return;
-
-    // Place stone
-    room.board[r][c] = player.color;
-    room.history.push({ row: r, col: c, color: player.color });
-    room.currentPlayer = player.color === 'black' ? 'white' : 'black';
-
-    // Broadcast move to both players (client ignores its own echo)
-    io.to(room.id).emit('move', {
-      row: r, col: c,
-      playerColor: player.color,
-      placedBy: player.name,
-      nextPlayer: room.currentPlayer,
+    on('register',d=>{
+      if(players.has(socket.id)) {socket.emit('registered',{name:players.get(socket.id).name,protocol:2});return;}
+      if(d.name!==undefined&&typeof d.name!=='string') throw Error('昵称格式不正确');
+      const name=(d.name||'').trim().slice(0,24);
+      players.set(socket.id,{name:!name||name==='玩家'?'玩家'+socket.id.slice(0,4):name,roomId:null,color:null,ready:false});
+      socket.emit('registered',{name:players.get(socket.id).name,protocol:2});
     });
-
-    // Check win
-    if (checkWin(room, r, c)) {
-      finishRoom(room, {
-        winner: player.name,
-        winnerColor: player.color,
-        reason: 'five-in-a-row',
-      });
-      console.log(`[WIN] ${player.name} won in "${room.name}"`);
-    } else if (isBoardFull(room)) {
-      finishRoom(room, { winner: null, winnerColor: null, reason: 'draw' });
-      console.log(`[DRAW] Draw in "${room.name}"`);
-    }
-  });
-
-  // 投降
-  socket.on('resign', () => {
-    const player = players.get(socket.id);
-    if (!player || !player.roomId) return;
-
-    const room = rooms.get(player.roomId);
-    if (!room || room.gameState !== 'playing') return;
-
-    const opponent = room.players.find(p => p.socketId !== socket.id);
-
-    finishRoom(room, {
-      winner: opponent ? opponent.name : null,
-      winnerColor: opponent ? opponent.color : player.color === 'black' ? 'white' : 'black',
-      reason: 'resign',
-      resignedBy: player.name,
+    on('createRoom',d=>{
+      const p=players.get(socket.id);if(!p) throw Error('请先连接并注册');
+      if(Date.now()-lastCreate<1000) throw Error('请稍后再创建房间');
+      if(rooms.size>=1000) throw Error('服务器房间已满');
+      if(typeof d.roomName!=='string'||!d.roomName.trim()||d.roomName.length>40) throw Error('请填写有效的房间名称');
+      if(d.playerColor!==undefined&&!['black','white'].includes(d.playerColor)) throw Error('执子颜色不正确');
+      const game=new GameRules(d.kind??'gomoku',d.size??(d.kind==='go'?9:15));
+      leave(socket);lastCreate=Date.now();
+      let id;do{id=String(randomInt(100000,1000000));}while(rooms.has(id));
+      const room={id,name:d.roomName.trim(),game,players:[socket.id],phase:'waiting',confirmations:new Set(),
+        result:null,pendingUndo:null,revision:0};
+      rooms.set(id,room);p.roomId=id;p.color=d.playerColor||'black';p.ready=false;socket.join(id);
+      socket.emit('roomCreated',{roomId:id,roomName:room.name,yourColor:p.color,kind:game.kind,size:game.size});
+      publish(room);
     });
-
-    console.log(`[RESIGN] ${player.name} resigned in "${room.name}"`);
-  });
-
-  // 聊天消息：只广播给房间里的其他人（不回显给发送者，
-  // 客户端发送时已把消息本地插入聊天记录）
-  socket.on('chat', ({ message }) => {
-    const player = players.get(socket.id);
-    if (!player || !message || !player.roomId) return;
-
-    socket.broadcast.to(player.roomId).emit('chatMessage', {
-      message: String(message).substring(0, 100),
-      sender: player.name,
+    on('joinRoom',d=>{
+      const p=players.get(socket.id);if(!p) throw Error('请先连接并注册');
+      if(typeof d.roomId!=='string'||!d.roomId.trim()) throw Error('请填写房间码');
+      const room=rooms.get(d.roomId.trim())||[...rooms.values()].find(r=>r.name===d.roomId.trim());
+      if(!room) throw Error('房间不存在');
+      if(p.roomId===room.id) throw Error('你已在该房间中');
+      if(room.players.length>=2) throw Error('房间已满');
+      if(room.phase!=='waiting') throw Error('该房间已开始对局');
+      if(d.kind && d.kind!==room.game.kind) throw Error('房间玩法不匹配，请切换到对应棋种');
+      leave(socket);
+      const opponent=players.get(room.players[0]);
+      room.players.push(socket.id);p.roomId=room.id;p.color=other(opponent.color);p.ready=false;socket.join(room.id);
+      socket.emit('roomJoined',{roomId:room.id,yourColor:p.color,opponentName:opponent.name,kind:room.game.kind,size:room.game.size});
+      io.to(room.players[0]).emit('opponentJoined',{name:p.name,color:p.color});publish(room);
     });
-  });
-
-  // 悔棋请求（需对方同意）：若对方已应子则撤两步（应子+自己一步），否则撤自己一步
-  socket.on('undoRequest', () => {
-    const player = players.get(socket.id);
-    if (!player || !player.roomId) return;
-    const room = rooms.get(player.roomId);
-    if (!room || room.gameState !== 'playing') {
-      socket.emit('undoAnswer', { accept: false, reason: 'not-playing' });
-      return;
-    }
-    if (room.pendingUndo) {
-      socket.emit('undoAnswer', { accept: false, reason: 'busy' });
-      return;
-    }
-    const h = room.history;
-    let moves = 0;
-    if (h.length >= 2 && h[h.length - 1].color !== player.color && h[h.length - 2].color === player.color) {
-      moves = 2; // 自己一步 + 对方应子一步
-    } else if (h.length >= 1 && h[h.length - 1].color === player.color) {
-      moves = 1; // 仅自己最后一步（对方尚未应子）
-    }
-    if (moves === 0) {
-      socket.emit('undoAnswer', { accept: false, reason: 'no-move' });
-      return;
-    }
-    const opponent = room.players.find((p) => p.socketId !== socket.id);
-    if (!opponent) {
-      socket.emit('undoAnswer', { accept: false, reason: 'no-opponent' });
-      return;
-    }
-    room.pendingUndo = { by: socket.id, to: opponent.socketId, moves, historyLen: h.length };
-    io.to(opponent.socketId).emit('undoAsk', { name: player.name });
-    console.log(`[UNDO] ${player.name} requests undo (${moves} ply)`);
-  });
-
-  // 悔棋答复：只有被请求方的一次答复有效
-  socket.on('undoReply', ({ accept }) => {
-    const player = players.get(socket.id);
-    if (!player || !player.roomId) return;
-    const room = rooms.get(player.roomId);
-    const pu = room && room.pendingUndo;
-    if (!pu || pu.to !== socket.id) return; // 过期答复，忽略
-    room.pendingUndo = null;
-
-    if (!accept) {
-      io.to(pu.by).emit('undoAnswer', { accept: false, reason: 'rejected' });
-      return;
-    }
-    const h = room.history;
-    // 询问期间棋局发生了变化（对方抢先落子/终局）→ 悔棋作废
-    if (room.gameState !== 'playing' || h.length !== pu.historyLen) {
-      io.to(pu.by).emit('undoAnswer', { accept: false, reason: 'stale' });
-      return;
-    }
-    const removed = h.splice(h.length - pu.moves, pu.moves);
-    for (const m of removed) room.board[m.row][m.col] = null;
-    const requester = players.get(pu.by);
-    if (requester && requester.color) room.currentPlayer = requester.color;
-    io.to(room.id).emit('undone', {
-      removed: removed.map((m) => ({ row: m.row, col: m.col })),
-      nextPlayer: room.currentPlayer,
-    });
-    console.log(`[UNDO] ${requester ? requester.name : pu.by} undid ${pu.moves} ply in "${room.name}"`);
-  });
-
-  // 离开房间
-  socket.on('leaveRoom', () => {
-    handleLeave(socket.id);
-  });
-
-  // 断线处理
-  socket.on('disconnect', () => {
-    handleDisconnect(socket.id);
-  });
-});
-
-// ==================== Helper Functions ====================
-
-function startRoom(room) {
-  room.gameState = 'playing';
-  room.currentPlayer = 'black';
-  room.board = emptyBoard();
-  room.history = [];
-  room.pendingUndo = null;
-
-  // 重置准备标记，为下一局准备
-  room.players.forEach(p => {
-    const pl = players.get(p.socketId);
-    if (pl) pl.ready = false;
-  });
-
-  // gameStarted 必须逐人定向发送（yourColor / yourTurn 因人而异）
-  room.players.forEach(p => {
-    io.to(p.socketId).emit('gameStarted', {
-      black: room.players.find(x => x.color === 'black')?.name,
-      white: room.players.find(x => x.color === 'white')?.name,
-      yourColor: p.color,
-      yourTurn: p.color === 'black',
-    });
-  });
-
-  console.log(`[GAME] Started in "${room.name}"`);
-}
-
-function finishRoom(room, result) {
-  room.gameState = 'finished';
-  io.to(room.id).emit('gameOver', result);
-}
-
-function notifySurvivor(room, leftName, reason) {
-  // 只剩一人时：进行中的对局判留守方胜；等待中则仅提示对手离开
-  if (room.gameState === 'playing') {
-    const survivor = room.players[0];
-    io.to(room.id).emit('gameOver', {
-      winner: survivor ? survivor.name : null,
-      winnerColor: survivor ? survivor.color : null,
-      reason: reason,
-      leftBy: leftName,
-    });
-  } else if (room.gameState === 'waiting') {
-    const survivor = room.players[0];
-    if (survivor) {
-      io.to(survivor.socketId).emit(
-        reason === 'disconnected' ? 'opponentDisconnected' : 'opponentLeft',
-        { name: leftName },
-      );
-    }
-  }
-  room.gameState = 'finished';
-  // 房间即将销毁：清掉留守方的服务器端房间状态，
-  // 防止陈旧 roomId 阻碍其后续建房/加房
-  const survivorPlayer = room.players[0] ? players.get(room.players[0].socketId) : null;
-  if (survivorPlayer) {
-    survivorPlayer.roomId = null;
-    survivorPlayer.ready = false;
-  }
-  rooms.delete(room.id);
-}
-
-// 撤销与相关方离开/掉线时的挂起悔棋清理
-function cancelPendingUndo(room, cancellingSocketId) {
-  const pu = room.pendingUndo;
-  if (!pu) return;
-  room.pendingUndo = null;
-  if (pu.by === cancellingSocketId) {
-    io.to(pu.to).emit('undoCancelled');
-  } else {
-    io.to(pu.by).emit('undoAnswer', { accept: false, reason: 'left' });
-  }
-}
-
-function handleDisconnect(socketId) {
-  console.log(`[DISCONNECT] ${socketId}`);
-  const player = players.get(socketId);
-  if (!player) return;
-
-  if (player.roomId && rooms.has(player.roomId)) {
-    const room = rooms.get(player.roomId);
-    cancelPendingUndo(room, socketId);
-    const idx = room.players.findIndex(p => p.socketId === socketId);
-
-    if (idx >= 0) {
-      room.players.splice(idx, 1);
-      console.log(`[INFO] ${player.name} disconnected from "${room.name}"`);
-
-      if (room.players.length < 2) {
-        notifySurvivor(room, player.name, 'disconnected');
+    on('startGame',()=>{
+      const {player,room}=member(socket);
+      if(room.phase==='playing'||room.phase==='scoring') return;
+      if(room.players.length!==2) throw Error('等待对手进入房间');
+      if(room.phase==='finished') {
+        room.game=new GameRules(room.game.kind,room.game.size);room.phase='waiting';room.result=null;room.confirmations.clear();
+        room.players.forEach(id=>players.get(id).ready=false);
       }
-    }
-  }
-
-  players.delete(socketId);
-}
-
-function handleLeave(socketId) {
-  const player = players.get(socketId);
-  if (!player) return;
-
-  if (player.roomId && rooms.has(player.roomId)) {
-    const room = rooms.get(player.roomId);
-    cancelPendingUndo(room, socketId);
-    const idx = room.players.findIndex(p => p.socketId === socketId);
-
-    if (idx >= 0) {
-      const leavingSocket = io.sockets.sockets.get(socketId);
-      if (leavingSocket) leavingSocket.leave(room.id);
-
-      room.players.splice(idx, 1);
-      console.log(`[LEAVE] ${player.name} left "${room.name}"`);
-
-      if (room.players.length < 2) {
-        notifySurvivor(room, player.name, 'left');
+      player.ready=true;
+      socket.to(room.id).emit('playerReady',{name:player.name,color:player.color});
+      if(room.players.every(id=>players.get(id).ready)) {
+        room.phase='playing';
+        for(const id of room.players) {
+          const p=players.get(id);
+          io.to(id).emit('gameStarted',{yourColor:p.color,yourTurn:p.color==='black',kind:room.game.kind,size:room.game.size});
+        }
       }
-    }
-  }
-
-  player.roomId = null;
-  player.color = null;
-  player.ready = false;
+      publish(room);
+    });
+    on('makeMove',d=>{
+      const {player,room}=turn(socket);room.game.play(d.row,d.col);cancelUndo(room);
+      io.to(room.id).emit('move',{row:d.row,col:d.col,playerColor:player.color,nextPlayer:room.game.currentPlayer,placedBy:player.name});
+      if(room.game.winner!==undefined) finish(room,{winnerColor:room.game.winner,reason:room.game.winner?'five-in-a-row':'draw'});
+      else publish(room);
+    });
+    on('pass',()=>{
+      const {room}=turn(socket);room.game.pass();cancelUndo(room);
+      if(room.game.scoring) {room.phase='scoring';room.confirmations.clear();}
+      publish(room);
+    });
+    on('markDead',d=>{
+      const {room}=member(socket);
+      if(room.phase!=='scoring') throw Error('当前不在终局核对阶段');
+      if(d.revision!==room.revision) throw Error('棋局已更新，请核对后重试');
+      room.game.toggleDead(d.row,d.col);room.confirmations.clear();publish(room);
+    });
+    on('confirmScore',d=>{
+      const {room}=member(socket);if(room.phase!=='scoring') throw Error('当前不在计分阶段');
+      if(d.revision!==room.revision) throw Error('计分已更新，请重新核对');
+      room.confirmations.add(socket.id);
+      if(room.confirmations.size===2) {
+        const score=room.game.score();
+        finish(room,{winnerColor:score.black>score.white?'black':score.black<score.white?'white':null,reason:'score',score});
+      } else publish(room);
+    });
+    on('resumePlay',()=>{
+      const {room}=member(socket);if(room.phase!=='scoring') throw Error('当前不能恢复对局');
+      room.game.resume();room.phase='playing';room.confirmations.clear();publish(room);
+    });
+    on('resign',()=>{
+      const {player,room}=member(socket);if(!['playing','scoring'].includes(room.phase)) throw Error('对局尚未开始或已经结束');
+      finish(room,{winnerColor:other(player.color),reason:'resign'});
+    });
+    on('chat',d=>{
+      const {room,player}=member(socket);if(typeof d.message!=='string'||!d.message.trim()) throw Error('消息不能为空');
+      socket.to(room.id).emit('chatMessage',{message:d.message.trim().slice(0,100),sender:player.name});
+    });
+    on('undoRequest',()=>{
+      const {room,player}=member(socket);
+      if(!['playing','scoring'].includes(room.phase)) throw Error('当前不能悔棋');
+      if(room.pendingUndo) throw Error('已有悔棋请求等待答复');
+      const h=room.game.history,last=h.at(-1),previous=h.at(-2);
+      const count=last?.color===player.color?1:previous?.color===player.color?2:0;
+      if(!count) throw Error('暂无你可以撤回的走棋');
+      const to=room.players.find(id=>id!==socket.id);
+      const pending={by:socket.id,to,count,historyLen:h.length,timer:null};room.pendingUndo=pending;
+      pending.timer=setTimeout(()=>{if(room.pendingUndo===pending){cancelUndo(room,'timeout');publish(room);}},30000);
+      pending.timer.unref();io.to(to).emit('undoAsk',{name:player.name});publish(room);
+    });
+    on('undoReply',d=>{
+      const {room}=member(socket),pending=room.pendingUndo;
+      if(typeof d.accept!=='boolean') throw Error('答复格式不正确');
+      if(!pending||pending.to!==socket.id) throw Error('悔棋请求已失效');
+      if(!d.accept) {cancelUndo(room,'rejected');publish(room);return;}
+      clearTimeout(pending.timer);room.pendingUndo=null;
+      if(room.game.history.length!==pending.historyLen) {io.to(pending.by).emit('undoAnswer',{accept:false,reason:'stale'});publish(room);return;}
+      const removed=room.game.undo(pending.count);
+      room.phase=room.game.scoring?'scoring':'playing';room.confirmations.clear();
+      io.to(room.id).emit('undone',{removed:removed.filter(m=>m.type==='move').map(m=>({row:m.row,col:m.col})),nextPlayer:room.game.currentPlayer});
+      io.to(pending.by).emit('undoAnswer',{accept:true});publish(room);
+    });
+    on('getState',()=>{const {room}=member(socket);socket.emit('state',snapshot(room));});
+    on('leaveRoom',()=>leave(socket));
+    socket.on('disconnect',()=>{leave(socket,true);players.delete(socket.id);});
+  });
+  return {server,io,rooms};
 }
-
-function checkWin(room, row, col) {
-  const stone = room.board[row][col];
-  if (!stone) return false;
-
-  const directions = [
-    [0, 1],   // horizontal
-    [1, 0],   // vertical
-    [1, 1],   // diagonal down-right
-    [1, -1],  // diagonal down-left
-  ];
-
-  for (const [dr, dc] of directions) {
-    let count = 1;
-
-    // Count in positive direction
-    for (let i = 1; i < 5; i++) {
-      const r = row + dr * i;
-      const c = col + dc * i;
-      if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE && room.board[r][c] === stone) {
-        count++;
-      } else break;
-    }
-
-    // Count in negative direction
-    for (let i = 1; i < 5; i++) {
-      const r = row - dr * i;
-      const c = col - dc * i;
-      if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE && room.board[r][c] === stone) {
-        count++;
-      } else break;
-    }
-
-    if (count >= 5) return true;
-  }
-
-  return false;
-}
-
-function isBoardFull(room) {
-  for (let r = 0; r < BOARD_SIZE; r++) {
-    for (let c = 0; c < BOARD_SIZE; c++) {
-      if (room.board[r][c] === null) return false;
-    }
-  }
-  return true;
-}
-
-// ==================== Start Server ====================
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`========================================`);
-  console.log(`  寄丢五子棋 联机服务器启动成功!`);
-  console.log(`  地址: ws://0.0.0.0:${PORT}`);
-  console.log(`  健康检查: http://0.0.0.0:${PORT}/health`);
-  console.log(`========================================`);
-});
-
-// Graceful shutdown（PM2 stop 默认发 SIGINT，须与 SIGTERM 一并处理）
-for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => {
-    console.log(`\n[SHUTDOWN] ${sig} received, shutting down...`);
-    server.close(() => process.exit(0));
+if(require.main===module) {
+  const {server,io}=createGameServer();
+  const port=Number(process.env.PORT||3000);
+  server.listen(port,'0.0.0.0',()=>console.log('READY '+server.address().port));
+  for(const sig of ['SIGINT','SIGTERM']) process.once(sig,()=>{
+    const timer=setTimeout(()=>process.exit(1),5000);timer.unref();
+    io.close(()=>process.exit(0));
   });
 }
+module.exports={createGameServer};

@@ -1,11 +1,11 @@
 {
-    "name": "gomuku",
-    "short_name": "gomuku",
+    "name": "寄丢棋室",
+    "short_name": "寄丢棋室",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FFFDF3",
+    "theme_color": "#FFFDF3",
+    "description": "五子棋与围棋，一方棋盘，片刻从容。",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

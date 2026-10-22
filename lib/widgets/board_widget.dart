@@ -13,6 +13,7 @@ class BoardWidget extends StatelessWidget {
   final Player currentPlayer;
   final void Function(int row, int col) onTapCell;
   final int themeIndex;
+  final Set<Position> markedPositions;
 
   const BoardWidget({
     super.key,
@@ -22,11 +23,12 @@ class BoardWidget extends StatelessWidget {
     required this.onTapCell,
     this.lastMove,
     this.themeIndex = 0,
+    this.markedPositions = const {},
   });
 
   @override
   Widget build(BuildContext context) {
-    final palette = ThemePalette.all[themeIndex];
+    final palette = ThemePalette.resolve(context, themeIndex);
     final n = board.length;
 
     return LayoutBuilder(
@@ -77,6 +79,7 @@ class BoardWidget extends StatelessWidget {
               child: CustomPaint(
                 size: Size(totalSize, totalSize),
                 painter: _BoardPainter(
+                  markedPositions: markedPositions,
                   board: board,
                   gameState: gameState,
                   lastMove: lastMove,
@@ -99,6 +102,7 @@ class BoardWidget extends StatelessWidget {
 // ========== Painter ==========
 
 class _BoardPainter extends CustomPainter {
+  final Set<Position> markedPositions;
   final List<List<CellState>> board;
   final GameState gameState;
   final Position? lastMove;
@@ -110,6 +114,7 @@ class _BoardPainter extends CustomPainter {
   final int n;
 
   _BoardPainter({
+    required this.markedPositions,
     required this.board,
     required this.gameState,
     required this.lastMove,
@@ -153,7 +158,12 @@ class _BoardPainter extends CustomPainter {
       drawDot(11, 3);
       drawDot(11, 11);
     } else if (n >= 9) {
-      drawDot(n ~/ 2, n ~/ 2);
+      final inset = n == 9 ? 2 : 3;
+      for (final r in [inset, n ~/ 2, n - 1 - inset]) {
+        for (final c in [inset, n ~/ 2, n - 1 - inset]) {
+          drawDot(r, c);
+        }
+      }
     }
 
     // ---------- 棋子 ----------
@@ -210,13 +220,23 @@ class _BoardPainter extends CustomPainter {
               Paint()..color = Colors.white.withValues(alpha: 0.6));
         }
 
-        // ---------- 最后一步红色标记 ----------
+        if (markedPositions.contains(Position(row: r, col: c))) {
+          final mark = Paint()
+            ..color = palette.primaryColor
+            ..strokeWidth = 2.5;
+          final d = stoneRadius * .6;
+          canvas.drawLine(Offset(cx - d, cy - d), Offset(cx + d, cy + d), mark);
+          canvas.drawLine(Offset(cx - d, cy + d), Offset(cx + d, cy - d), mark);
+        }
+        // ---------- 最后一步标记 ----------
         if (lastMove != null && lastMove!.row == r && lastMove!.col == c) {
           canvas.drawCircle(
             Offset(cx, cy),
             stoneRadius * 0.2,
             Paint()
-              ..color = const Color(0xFFFF2222)
+              ..color = cell == CellState.black
+                  ? const Color(0xFFF1DBAB)
+                  : const Color(0xFF7C6744)
               ..style = PaintingStyle.fill,
           );
         }

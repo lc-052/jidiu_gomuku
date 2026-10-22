@@ -1,7 +1,7 @@
 name: gomuku
-description: 寄丢五子棋 - A Gomoku board game
+description: 寄丢棋室 - Flutter 五子棋与围棋对战应用
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -21,16 +21,18 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^5.0.0
   flutter_launcher_icons: ^0.14.4
+  test: ^1.31.1
 
 flutter:
   uses-material-design: true
   assets:
     - assets/
+    - assets/icon/
 
 flutter_launcher_icons:
   image_path: "assets/icon/app_icon.png"
   android: true
   ios: false
-  # 自适应图标：纯白底 + 缩小到安全区的前景
-  adaptive_icon_background: "#FFFFFF"
+  # 自适应图标：米白底 + 安全区前景
+  adaptive_icon_background: "#FFFDF3"
   adaptive_icon_foreground: "assets/icon/app_icon_fg.png"

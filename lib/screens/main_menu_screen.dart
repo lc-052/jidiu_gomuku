@@ -1,488 +1,187 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:provider/provider.dart';
-import 'package:gomuku/main.dart';
-import 'package:gomuku/models/theme_model.dart';
-import 'package:gomuku/services/storage_service.dart';
+import '../models/game_kind.dart';
+import '../widgets/section_card.dart';
+import '../widgets/theme_settings_card.dart';
+import '../widgets/adaptive_card_pair.dart';
 
-/// 主菜单界面 —— 用户启动应用后看到的第一屏。
 class MainMenuScreen extends StatefulWidget {
   const MainMenuScreen({super.key});
-
   @override
   State<MainMenuScreen> createState() => _MainMenuScreenState();
 }
 
-class _MainMenuScreenState extends State<MainMenuScreen>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _animController;
-
+class _MainMenuScreenState extends State<MainMenuScreen> {
+  GameKind _kind = GameKind.gomoku;
   @override
-  void initState() {
-    super.initState();
-    _animController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800),
-    )..forward();
-  }
-
-  // 注意：这里必须用 push 而不是 go —— go() 会替换整个导航栈，
-  // 对局页成为栈底后 pop「退出对局」会弹空导致黑屏。
-  void _navigateToLocal() {
-    GoRouter.of(context).push('/game', extra: {
-      'gameMode': 'local',
-      'chosenThemeIndex': context.read<ThemeNotifier>().chosenThemeIndex,
-    });
-  }
-
-  void _navigateToAI() {
-    GoRouter.of(context).push('/game', extra: {
-      'gameMode': 'ai',
-      'chosenThemeIndex': context.read<ThemeNotifier>().chosenThemeIndex,
-    });
-  }
-
-  void _navigateToOnline() {
-    GoRouter.of(context).push('/online');
-  }
-
-  void _navigateToSettings() {
-    GoRouter.of(context).push('/settings');
-  }
-
-  @override
-  void dispose() {
-    _animController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final themeIndex = context.watch<ThemeNotifier>().chosenThemeIndex;
-    final palette = ThemePalette.all[themeIndex];
-
-    return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              palette.bgColor,
-              palette.boardBgColor,
-              palette.bgColor,
-            ],
-            stops: const [0.0, 0.5, 1.0],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              // ========== 顶部标题区域 ==========
-              Flexible(
-                flex: 2,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    AnimatedBuilder(
-                      animation: _animController,
-                      builder: (context, child) {
-                        final t = CurvedAnimation(
-                          parent: _animController,
-                          curve: Curves.easeOutBack,
-                        ).value;
-                        return Transform.translate(
-                          offset: Offset(0, 20 * (1 - t)),
-                          child: Opacity(
-                            opacity: t,
-                            child: Column(
-                              children: [
-                                Icon(
-                                  Icons.sports_golf_rounded,
-                                  size: 72,
-                                  color: palette.primaryColor,
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  '寄丢五子棋',
-                                  style: TextStyle(
-                                    fontSize: 36,
-                                    fontWeight: FontWeight.w900,
-                                    color: palette.primaryColor,
-                                    letterSpacing: 4,
-                                    shadows: [
-                                      Shadow(
-                                        color: palette.primaryColor
-                                            .withValues(alpha: 0.3),
-                                        blurRadius: 12,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  '—— 落子无悔，智者博弈 ——',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: palette.secondaryColor,
-                                    fontStyle: FontStyle.italic,
-                                    letterSpacing: 2,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
-
-              // ========== 模式选择卡片 ==========
-              Flexible(
-                flex: 5,
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildModeCard(
-                        context: context,
-                        icon: Icons.people_outline_rounded,
-                        title: '双人对战',
-                        subtitle: '同一设备，两人轮流下棋',
-                        delay: 0,
-                        onTap: _navigateToLocal,
-                        themeIndex: themeIndex,
-                        animController: _animController,
-                      ),
-                      const SizedBox(height: 16),
-                      _buildModeCard(
-                        context: context,
-                        icon: Icons.lightbulb_outline_rounded,
-                        title: '人机对战',
-                        subtitle: '与电脑智多星切磋棋艺',
-                        delay: 0.15,
-                        onTap: _navigateToAI,
-                        themeIndex: themeIndex,
-                        animController: _animController,
-                      ),
-                      const SizedBox(height: 16),
-                      _buildModeCard(
-                        context: context,
-                        icon: Icons.public_outlined,
-                        title: '在线联机',
-                        subtitle: '与世界各地的棋友对弈',
-                        delay: 0.3,
-                        onTap: _navigateToOnline,
-                        themeIndex: themeIndex,
-                        animController: _animController,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // ========== 底部设置区域 ==========
-              Flexible(
-                flex: 2,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    // 主题选择器
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(
-                        ThemePalette.all.length,
-                        (index) => Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                          child: GestureDetector(
-                            onTap: () {
-                              context
-                                  .read<ThemeNotifier>()
-                                  .setThemeIndex(index);
-                              StorageService().saveThemeIndex(index);
-                            },
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 300),
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: ThemePalette.all[index].primaryColor,
-                                border: Border.all(
-                                  color: themeIndex == index
-                                      ? Colors.white
-                                      : Colors.transparent,
-                                  width: 3,
-                                ),
-                                boxShadow: themeIndex == index
-                                    ? [
-                                        BoxShadow(
-                                          color: ThemePalette
-                                              .all[index].primaryColor
-                                              .withValues(alpha: 0.5),
-                                          blurRadius: 8,
-                                        ),
-                                      ]
-                                    : null,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      ThemePalette.all[themeIndex].name,
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('寄丢棋室'), actions: [
+          IconButton(
+              tooltip: '设置',
+              icon: const Icon(Icons.tune_rounded),
+              onPressed: () => context.push('/settings')),
+          const SizedBox(width: 12),
+        ]),
+        body: Center(
+            child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1120),
+                child: ListView(padding: const EdgeInsets.all(20), children: [
+                  AdaptiveCardPair(
+                      firstFlex: 3,
+                      secondFlex: 2,
+                      first: const _WelcomeCard(),
+                      second: SectionCard(
+                          title: '今天，下一局什么棋？',
+                          child: Wrap(spacing: 12, runSpacing: 8, children: [
+                            for (final kind in GameKind.values)
+                              ChoiceChip(
+                                  label: Text(kind.label),
+                                  avatar: Icon(kind == GameKind.go
+                                      ? Icons.blur_circular_rounded
+                                      : Icons.grid_4x4_rounded),
+                                  selected: _kind == kind,
+                                  onSelected: (_) =>
+                                      setState(() => _kind = kind)),
+                          ]))),
+                  const SizedBox(height: 20),
+                  AdaptiveCardPair(
+                      firstFlex: 3,
+                      secondFlex: 2,
+                      breakpoint: 680,
+                      first: _ModeCard(
+                          featured: true,
+                          icon: Icons.people_outline_rounded,
+                          title: '同屏对弈',
+                          description: _kind == GameKind.go
+                              ? '与朋友面对面，从九路开始。\n一子一地，步步经营。'
+                              : '轮流执黑白，分享落子的乐趣。\n和身边的人，认真下一局。',
+                          onTap: () =>
+                              context.push('/game', extra: {'kind': _kind})),
+                      second: AdaptiveCardPair(
+                          breakpoint: 0,
+                          first: _ModeCard(
+                              icon: Icons.psychology_outlined,
+                              title: '人机练习',
+                              description: _kind == GameKind.go
+                                  ? '提子围地，三档练习'
+                                  : '三档难度，随时练习',
+                              onTap: () => context.push('/game',
+                                  extra: {'gameMode': 'ai', 'kind': _kind})),
+                          second: _ModeCard(
+                              icon: Icons.wifi_rounded,
+                              title: '在线棋室',
+                              description: '分享房间，远程交手',
+                              onTap: () => context
+                                  .push('/online', extra: {'kind': _kind})))),
+                  const SizedBox(height: 20),
+                  AdaptiveCardPair(
+                      firstFlex: 2,
+                      secondFlex: 3,
+                      breakpoint: 760,
+                      first: SectionCard(
+                          title: '落子之前',
+                          trailing: const Icon(Icons.lightbulb_outline_rounded),
+                          child: Text(_kind == GameKind.go
+                              ? '黑先白后，白贴 7.5 目。无气提子，禁止自杀与重复局面。双方连续停着后，确认死子再结算。'
+                              : '黑方先行，横、竖或斜向连成五子即可获胜。自由五子棋规则，不设禁手。')),
+                      second: const ThemeSettingsCard()),
+                  const SizedBox(height: 24),
+                  Text('一方棋盘 · 片刻从容',
+                      textAlign: TextAlign.center,
                       style: TextStyle(
-                        fontSize: 13,
-                        color: palette.secondaryColor,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    // 设置按钮
-                    Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(16),
-                        onTap: _navigateToSettings,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24,
-                            vertical: 12,
-                          ),
-                          decoration: BoxDecoration(
-                            border: Border.all(
-                              color:
-                                  palette.primaryColor.withValues(alpha: 0.3),
-                              width: 1,
-                            ),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.settings_outlined,
-                                size: 20,
-                                color: palette.primaryColor,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                '游戏设置',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: palette.primaryColor,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildModeCard({
-    required BuildContext context,
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required double delay,
-    required VoidCallback onTap,
-    required int themeIndex,
-    required AnimationController animController,
-  }) {
-    final palette = ThemePalette.all[themeIndex];
-    return AnimatedBuilder(
-      animation: animController,
-      builder: (context, child) {
-        final progress = animController.value;
-        final effectiveDelay = delay * 0.8;
-        final t = progress > effectiveDelay
-            ? ((progress - effectiveDelay) / (1 - effectiveDelay))
-                .clamp(0.0, 1.0)
-            : 0.0;
-        final eased = Curves.easeOutCubic.transform(t);
-
-        return Transform.translate(
-          offset: Offset(0, 40 * (1 - eased)),
-          child: Opacity(
-            opacity: eased,
-            child: _ModeCard(
-              icon: icon,
-              title: title,
-              subtitle: subtitle,
-              primaryColor: palette.primaryColor,
-              secondaryColor: palette.secondaryColor,
-              onTap: onTap,
-            ),
-          ),
-        );
-      },
-    );
-  }
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant)),
+                ]))),
+      );
 }
 
-// ========== 单个模式卡片组件 ==========
+class _WelcomeCard extends StatelessWidget {
+  const _WelcomeCard();
+  @override
+  Widget build(BuildContext context) => SectionCard(
+          child: Row(children: [
+        ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child:
+                Image.asset('assets/icon/app_icon.png', width: 80, height: 80)),
+        const SizedBox(width: 16),
+        Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('落一子，慢下来。', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          Text('五子棋与围棋的小小天地',
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        ])),
+      ]));
+}
 
-class _ModeCard extends StatefulWidget {
+class _ModeCard extends StatelessWidget {
   final IconData icon;
-  final String title;
-  final String subtitle;
-  final Color primaryColor;
-  final Color secondaryColor;
-  final VoidCallback onTap;
-
-  const _ModeCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.primaryColor,
-    required this.secondaryColor,
-    required this.onTap,
-  });
-
-  @override
-  State<_ModeCard> createState() => _ModeCardState();
-}
-
-class _ModeCardState extends State<_ModeCard> with TickerProviderStateMixin {
-  late AnimationController _rippleController;
-  bool _isPressed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _rippleController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 400),
-    );
-  }
-
-  @override
-  void dispose() {
-    _rippleController.dispose();
-    super.dispose();
-  }
-
-  void _handleTap() {
-    setState(() => _isPressed = true);
-    _rippleController.forward().then((_) {
-      setState(() => _isPressed = false);
-      widget.onTap();
-    });
-  }
-
+  final String title, description;
+  final VoidCallback? onTap;
+  final bool featured;
+  const _ModeCard(
+      {required this.icon,
+      required this.title,
+      required this.description,
+      this.onTap,
+      this.featured = false});
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white.withValues(alpha: 0.15),
-      borderRadius: BorderRadius.circular(20),
-      child: Ink(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Colors.white.withValues(alpha: 0.25),
-              Colors.white.withValues(alpha: 0.08),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: widget.primaryColor.withValues(alpha: 0.2),
-            width: 1.5,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: widget.primaryColor.withValues(alpha: 0.1),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: _handleTap,
-          splashColor: widget.primaryColor.withValues(alpha: 0.2),
-          highlightColor: widget.primaryColor.withValues(alpha: 0.1),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-            child: Row(
-              children: [
-                // 图标区
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  transform: Matrix4.identity()
-                    ..scaleByDouble(
-                      _isPressed ? 0.9 : 1.0,
-                      _isPressed ? 0.9 : 1.0,
-                      1.0,
-                      1.0,
-                    ),
-                  child: Container(
-                    width: 56,
-                    height: 56,
+    final scheme = Theme.of(context).colorScheme;
+    final ink = featured ? scheme.onPrimaryContainer : scheme.onSurface;
+    return Card(
+      color: featured ? scheme.primaryContainer : null,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: Padding(
+            padding: EdgeInsets.all(featured ? 24 : 16),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Container(
+                    padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: widget.primaryColor.withValues(alpha: 0.15),
-                    ),
-                    child: Icon(
-                      widget.icon,
-                      size: 28,
-                      color: widget.primaryColor,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 20),
-                // 文字区
+                        color: featured
+                            ? scheme.primary.withValues(alpha: .12)
+                            : scheme.surfaceContainerHigh,
+                        borderRadius: BorderRadius.circular(14)),
+                    child: Icon(icon,
+                        size: featured ? 30 : 24,
+                        color: onTap == null
+                            ? Theme.of(context).disabledColor
+                            : scheme.primary)),
+                if (featured) ...[
+                  const Spacer(),
+                  Text('面对面 · 慢慢下', style: TextStyle(color: ink))
+                ],
+              ]),
+              SizedBox(height: featured ? 24 : 16),
+              Text(title,
+                  style: (featured
+                          ? Theme.of(context).textTheme.headlineSmall
+                          : Theme.of(context).textTheme.titleMedium)
+                      ?.copyWith(color: ink)),
+              const SizedBox(height: 8),
+              Text(description,
+                  style: TextStyle(
+                      color: ink.withValues(alpha: .75), height: 1.6)),
+              SizedBox(height: featured ? 28 : 20),
+              Row(children: [
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        widget.title,
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: widget.primaryColor,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.subtitle,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: widget.secondaryColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                // 右箭头
+                    child: Text(onTap == null ? '暂未开放' : '开始一局',
+                        style: TextStyle(color: ink))),
                 Icon(
-                  Icons.chevron_right_rounded,
-                  size: 24,
-                  color: widget.secondaryColor.withValues(alpha: 0.5),
-                ),
-              ],
-            ),
-          ),
-        ),
+                    onTap == null
+                        ? Icons.lock_outline_rounded
+                        : Icons.arrow_forward_rounded,
+                    size: 20,
+                    color: ink),
+              ]),
+            ])),
       ),
     );
   }
