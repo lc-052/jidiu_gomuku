@@ -2,7 +2,7 @@
 
 基于 Flutter / Dart 的五子棋与围棋应用，支持 Android 和 Web，采用 Material Design 3 响应式卡片界面。
 
-[在线体验](http://101.37.85.166:3000/) · [源码](https://github.com/lc-052/jidiu_gomuku) · [更新记录](CHANGELOG.md) · [网页版部署](server/DEPLOY_WEB_1PANEL.md)
+[在线体验](http://101.37.85.166:3000/) · [下载安装包](https://github.com/lc-052/jidiu_gomuku/releases/latest) · [源码](https://github.com/lc-052/jidiu_gomuku) · [更新记录](CHANGELOG.md) · [网页版部署](server/DEPLOY_WEB_1PANEL.md)
 
 ## 功能
 
@@ -47,6 +47,8 @@ npm test
 ## Android Release
 
 当前版本：**1.1.0+2**。
+
+在 [GitHub Releases](https://github.com/lc-052/jidiu_gomuku/releases/latest) 下载 Android Release APK、Web / 1Panel 一体部署包及 SHA256 校验文件。Android 安装包使用开发签名，适合项目体验。
 
 ```bash
 flutter build apk --release --dart-define=GAME_SERVER_URL=http://101.37.85.166:3000
