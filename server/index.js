@@ -75,11 +75,11 @@ function createGameServer(options={}) {
       next();
     });
     function on(event,handler) {
-      socket.on(event,(data={})=>{
+      socket.on(event,(data={},ack)=>{
         try {
           if(!data||typeof data!=='object'||Array.isArray(data)) throw Error('请求数据格式不正确');
-          handler(data);
-        } catch(e) {error(socket,e.message||'请求失败');}
+          handler(data,typeof ack==='function'?ack:()=>{});
+        } catch(e) {error(socket,e.message||'请求失败');if(typeof ack==='function') ack({ok:false,message:e.message||'请求失败'});}
       });
     }
     on('register',d=>{
@@ -124,8 +124,9 @@ function createGameServer(options={}) {
       if(room.phase==='playing'||room.phase==='scoring') return;
       if(room.players.length!==2) throw Error('等待对手进入房间');
       if(room.phase==='finished') {
+        player.ready=true;
+        if(!room.players.every(id=>players.get(id).ready)) {publish(room);return;}
         room.game=new GameRules(room.game.kind,room.game.size);room.phase='waiting';room.result=null;room.confirmations.clear();
-        room.players.forEach(id=>players.get(id).ready=false);
       }
       player.ready=true;
       socket.to(room.id).emit('playerReady',{name:player.name,color:player.color});
@@ -172,9 +173,10 @@ function createGameServer(options={}) {
       const {player,room}=member(socket);if(!['playing','scoring'].includes(room.phase)) throw Error('对局尚未开始或已经结束');
       finish(room,{winnerColor:other(player.color),reason:'resign'});
     });
-    on('chat',d=>{
+    on('chat',(d,ack)=>{
       const {room,player}=member(socket);if(typeof d.message!=='string'||!d.message.trim()) throw Error('消息不能为空');
       socket.to(room.id).emit('chatMessage',{message:d.message.trim().slice(0,100),sender:player.name});
+      ack({ok:true});
     });
     on('undoRequest',()=>{
       const {room,player}=member(socket);

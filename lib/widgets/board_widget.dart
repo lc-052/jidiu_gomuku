@@ -14,6 +14,7 @@ class BoardWidget extends StatelessWidget {
   final void Function(int row, int col) onTapCell;
   final int themeIndex;
   final Set<Position> markedPositions;
+  final Set<Position> winningPositions;
 
   const BoardWidget({
     super.key,
@@ -24,6 +25,7 @@ class BoardWidget extends StatelessWidget {
     this.lastMove,
     this.themeIndex = 0,
     this.markedPositions = const {},
+    this.winningPositions = const {},
   });
 
   @override
@@ -79,6 +81,7 @@ class BoardWidget extends StatelessWidget {
               child: CustomPaint(
                 size: Size(totalSize, totalSize),
                 painter: _BoardPainter(
+                  winningPositions: winningPositions,
                   markedPositions: markedPositions,
                   board: board,
                   gameState: gameState,
@@ -102,6 +105,7 @@ class BoardWidget extends StatelessWidget {
 // ========== Painter ==========
 
 class _BoardPainter extends CustomPainter {
+  final Set<Position> winningPositions;
   final Set<Position> markedPositions;
   final List<List<CellState>> board;
   final GameState gameState;
@@ -114,6 +118,7 @@ class _BoardPainter extends CustomPainter {
   final int n;
 
   _BoardPainter({
+    required this.winningPositions,
     required this.markedPositions,
     required this.board,
     required this.gameState,
@@ -220,6 +225,15 @@ class _BoardPainter extends CustomPainter {
               Paint()..color = Colors.white.withValues(alpha: 0.6));
         }
 
+        if (winningPositions.contains(Position(row: r, col: c))) {
+          canvas.drawCircle(
+              Offset(cx, cy),
+              stoneRadius + 3,
+              Paint()
+                ..color = palette.primaryColor
+                ..strokeWidth = 3
+                ..style = PaintingStyle.stroke);
+        }
         if (markedPositions.contains(Position(row: r, col: c))) {
           final mark = Paint()
             ..color = palette.primaryColor

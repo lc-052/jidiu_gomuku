@@ -38,6 +38,7 @@ Map<String, dynamic> position(
 
 class PreviewNetwork extends NetworkService {
   final actions = <String>[];
+  bool chatSucceeds = true;
   PreviewNetwork(Map<String, dynamic> data) {
     latestState = OnlineRoomState.fromJson(data);
     roomId = latestState!.roomId;
@@ -46,6 +47,17 @@ class PreviewNetwork extends NetworkService {
   bool get isConnected => true;
   @override
   void requestState() {}
+  @override
+  Future<bool> sendChat(String message) async {
+    actions.add('chat:$message');
+    return chatSucceeds;
+  }
+
+  @override
+  void startGame() {
+    actions.add('start');
+  }
+
   @override
   void leaveRoom() {
     resetRoomState();
@@ -119,5 +131,82 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     tester.view.resetPhysicalSize();
     tester.view.resetDevicePixelRatio();
+  });
+
+  testWidgets('chat opens visibly, sends, receives, and retains failed drafts',
+      (tester) async {
+    final n = PreviewNetwork(position());
+    await tester.pumpWidget(wrap(n));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('聊天'));
+    await tester.tap(find.text('聊天'));
+    await tester.pumpAndSettle();
+    expect(find.text('局内聊天'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '你好');
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+    expect(n.actions, contains('chat:你好'));
+    expect(find.text('你：你好'), findsOneWidget);
+    n.onChatMessage?.call('收到', '对手');
+    await tester.pumpAndSettle();
+    expect(find.text('对手：收到'), findsOneWidget);
+    n.chatSucceeds = false;
+    await tester.enterText(find.byType(TextField), '保留草稿');
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+    expect(find.text('发送失败，消息已保留，请重试'), findsOneWidget);
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        '保留草稿');
+    await tester.tap(find.byTooltip('关闭聊天'));
+    await tester.pumpAndSettle();
+    n.onChatMessage?.call('再来一局？', '对手');
+    await tester.pump();
+    expect(find.text('聊天 · 1'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+      'result opens once and final board remains while waiting for rematch',
+      (tester) async {
+    final n = PreviewNetwork(position());
+    await tester.pumpWidget(wrap(n));
+    await tester.pumpAndSettle();
+    final ended = position(phase: 'finished', revision: 2);
+    ended['kind'] = 'gomoku';
+    ended['winnerColor'] = 'black';
+    ended['reason'] = 'five-in-a-row';
+    ended['moveCount'] = 9;
+    for (final player in ended['players']) {
+      player['ready'] = false;
+    }
+    ended['lastMove'] = {'row': 0, 'col': 4};
+    for (var col = 0; col < 5; col++) {
+      ended['board'][0][col] = 'black';
+    }
+    n.emit(ended);
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(
+        find.descendant(
+            of: find.byType(AlertDialog), matching: find.text('你获胜了')),
+        findsOneWidget);
+    await tester.tap(find.text('查看棋盘'));
+    await tester.pumpAndSettle();
+    final board = tester.widget<BoardWidget>(find.byType(BoardWidget));
+    expect(board.winningPositions.length, 5);
+    expect(board.board[0][4], CellState.black);
+    await tester.ensureVisible(find.text('再来一局'));
+    await tester.tap(find.text('再来一局'));
+    await tester.pump();
+    expect(n.actions, contains('start'));
+    ended['revision'] = 3;
+    ended['players'][0]['ready'] = true;
+    n.emit(ended);
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(tester.widget<BoardWidget>(find.byType(BoardWidget)).board[0][4],
+        CellState.black);
+    expect(find.text('已准备，等待对手'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }

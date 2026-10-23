@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../models/game_kind.dart';
+import '../models/game_state.dart';
 import '../models/game_session.dart';
 import '../models/theme_notifier.dart';
 import '../services/storage_service.dart';
@@ -10,6 +11,7 @@ import '../widgets/board_widget.dart';
 import '../widgets/game_cards.dart';
 import '../widgets/section_card.dart';
 import '../widgets/adaptive_card_pair.dart';
+import '../widgets/game_result.dart';
 
 class GameScreen extends StatefulWidget {
   final int gameMode;
@@ -26,6 +28,7 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen> {
   GameSession? _session;
+  bool _resultNotified = false;
   late int _size = widget.kind == GameKind.go ? 9 : 15;
   @override
   void dispose() {
@@ -60,8 +63,63 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
-  void _start() => setState(() => _session =
-      GameSession(kind: widget.kind, size: _size, ai: widget.gameMode == 1));
+  void _start() {
+    _session?.dispose();
+    _resultNotified = false;
+    final session =
+        GameSession(kind: widget.kind, size: _size, ai: widget.gameMode == 1);
+    session.addListener(_onSessionChanged);
+    setState(() => _session = session);
+  }
+
+  void _onSessionChanged() {
+    final session = _session;
+    if (session == null || !session.over) {
+      _resultNotified = false;
+      return;
+    }
+    if (_resultNotified) return;
+    _resultNotified = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && session == _session && session.over) _showResult(session);
+    });
+  }
+
+  GameResultDetails _resultDetails(GameSession s) => GameResultDetails(
+        title: s.status,
+        reason: endReason(s.resignedWinner != null
+            ? 'resign'
+            : s.isGo
+                ? 'score'
+                : s.state == GameState.draw
+                    ? 'draw'
+                    : 'five-in-a-row'),
+        size: s.size,
+        moves: s.moves,
+        last: s.last,
+        players:
+            s.ai ? '你执${s.human.cn} · 电脑执${s.human.opponent().cn}' : '同屏双人对局',
+        score: s.isGo && s.resignedWinner == null
+            ? '黑 ${s.go.score().black.toStringAsFixed(1)} · 白 ${s.go.score().white.toStringAsFixed(1)}'
+            : null,
+      );
+
+  Future<void> _showResult(GameSession s) => showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+              title: const Text('对局结束'),
+              content: SingleChildScrollView(child: _resultDetails(s)),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('查看棋盘')),
+                FilledButton(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      s.reset();
+                    },
+                    child: const Text('再来一局'))
+              ]));
 
   @override
   Widget build(BuildContext context) {
@@ -138,6 +196,18 @@ class _GameScreenState extends State<GameScreen> {
                   gameState: session.state,
                   currentPlayer: session.current,
                   lastMove: session.last,
+                  winningPositions: !session.isGo &&
+                          session.over &&
+                          session.resignedWinner == null
+                      ? gomokuWinningLine(
+                          session.board,
+                          session.last,
+                          session.state == GameState.blackWon
+                              ? Player.black
+                              : session.state == GameState.whiteWon
+                                  ? Player.white
+                                  : null)
+                      : const {},
                   themeIndex: context.watch<ThemeNotifier>().chosenThemeIndex,
                   markedPositions: session.isGo ? session.go.dead : const {},
                   onTapCell: (r, c) {
@@ -162,6 +232,19 @@ class _GameScreenState extends State<GameScreen> {
             Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           PlayerStatusCard(session: session),
           const SizedBox(height: 16),
+          if (session.over) ...[
+            SectionCard(
+                title: '本局结算',
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _resultDetails(session),
+                      TextButton(
+                          onPressed: () => _showResult(session),
+                          child: const Text('查看对局信息')),
+                    ])),
+            const SizedBox(height: 16),
+          ],
           if (session.isGo &&
               (session.scoring ||
                   (session.over && session.resignedWinner == null))) ...[

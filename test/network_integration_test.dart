@@ -101,7 +101,7 @@ void main() {
     await b.wait((s) => s.moves == 0);
     final message = Completer<String>();
     b.network.onChatMessage = (m, _) => message.complete(m);
-    a.network.sendChat('测试消息');
+    expect(await a.network.sendChat('测试消息'), true);
     expect(await message.future, '测试消息');
     // Waiting longer than the previous 2s delayed registration must not orphan a room.
     await Future<void>.delayed(const Duration(milliseconds: 2100));
@@ -114,7 +114,12 @@ void main() {
     expect(finalA.winner, Player.black);
     expect(finalB.winner, Player.black);
     a.network.startGame();
-    await a.wait((s) => s.phase == 'waiting');
+    final reviewing =
+        await a.wait((s) => s.finished && s.isReady(Player.black));
+    await b.wait((s) => s.finished && s.isReady(Player.black));
+    expect(reviewing.board, finalA.board);
+    expect(reviewing.moves, 9);
+    expect(reviewing.reason, 'five-in-a-row');
     b.network.startGame();
     await a.wait((s) => s.phase == 'playing' && s.moves == 0);
     expect(

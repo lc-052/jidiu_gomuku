@@ -10,6 +10,8 @@ import 'package:gomuku/screens/settings_screen.dart';
 import 'package:gomuku/screens/online_lobby_screen.dart';
 import 'package:gomuku/screens/online_game_screen.dart';
 import 'package:gomuku/services/storage_service.dart';
+import 'package:gomuku/widgets/board_widget.dart';
+import 'package:gomuku/models/game_state.dart';
 
 void main() {
   setUpAll(() async {
@@ -51,6 +53,32 @@ void main() {
     }
     tester.view.resetPhysicalSize();
     tester.view.resetDevicePixelRatio();
+  });
+  testWidgets('local victory shows result and keeps winning stones for review',
+      (tester) async {
+    await tester.pumpWidget(wrap(const GameScreen(gameMode: 0)));
+    await tester.tap(find.text('开始对弈'));
+    await tester.pumpAndSettle();
+    for (var col = 0; col < 5; col++) {
+      tester.widget<BoardWidget>(find.byType(BoardWidget)).onTapCell(4, col);
+      await tester.pump();
+      if (col < 4) {
+        tester.widget<BoardWidget>(find.byType(BoardWidget)).onTapCell(5, col);
+        await tester.pump();
+      }
+    }
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(
+        find.descendant(
+            of: find.byType(AlertDialog), matching: find.text('黑方获胜')),
+        findsOneWidget);
+    await tester.tap(find.text('查看棋盘'));
+    await tester.pumpAndSettle();
+    final board = tester.widget<BoardWidget>(find.byType(BoardWidget));
+    expect(board.board[4][4], CellState.black);
+    expect(board.winningPositions.length, 5);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
   testWidgets('display modes update settings immediately', (tester) async {
     await tester.pumpWidget(wrap(const SettingsScreen()));

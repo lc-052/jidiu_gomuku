@@ -10,6 +10,8 @@ import '../services/storage_service.dart';
 import '../widgets/adaptive_card_pair.dart';
 import '../widgets/board_widget.dart';
 import '../widgets/section_card.dart';
+import '../widgets/chat_sheet.dart';
+import '../widgets/game_result.dart';
 
 class OnlineGameScreen extends StatefulWidget {
   final NetworkService? network;
@@ -31,8 +33,9 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
   String? _roomMessage;
   Timer? _requestTimer;
   DialogRoute<bool>? _undoDialog;
-  final _chat = TextEditingController();
-  final List<String> _messages = [];
+  final _messages = ValueNotifier<List<String>>([]);
+  int _unread = 0;
+  bool _resultNotified = false;
   bool get _active => _state?.phase == 'playing' || _state?.phase == 'scoring';
   bool get _canAct =>
       _connected && !_closed && !_pending && _network.roomId != null;
@@ -53,6 +56,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
         _state = value;
         _pending = false;
       });
+      _showResultIfNeeded(value);
       if (oldMoves != null &&
           value.moves > oldMoves &&
           StorageService().vibrationEnabled) {
@@ -96,8 +100,8 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
     };
     _network.onChatMessage = (message, sender) {
       if (!mounted) return;
-      setState(() => _messages.add('$sender：$message'));
-      if (_messages.length > 100) _messages.removeAt(0);
+      _appendMessage('$sender：$message');
+      if (!_chatVisible) setState(() => _unread++);
       if (!_chatVisible) _notice('$sender：$message');
     };
     _network.onUndoAsk = _askUndo;
@@ -117,6 +121,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _network.flushPendingChat();
+      if (_state != null) _showResultIfNeeded(_state!);
       if (_connected && _network.roomId != null) _network.requestState();
     });
   }
@@ -218,7 +223,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
   @override
   void dispose() {
     _requestTimer?.cancel();
-    _chat.dispose();
+    _messages.dispose();
     _network.clearCallbacks();
     _network.leaveRoom();
     if (widget.network == null) _network.dispose();
@@ -289,6 +294,12 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                                 child: AspectRatio(
                                     aspectRatio: 1,
                                     child: BoardWidget(
+                                        winningPositions:
+                                            s.kind == GameKind.gomoku &&
+                                                    s.reason == 'five-in-a-row'
+                                                ? gomokuWinningLine(
+                                                    s.board, s.last, s.winner)
+                                                : const {},
                                         board: s.board,
                                         gameState: s.finished
                                             ? (s.winner == null
@@ -342,10 +353,6 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                                                       LinearProgressIndicator()),
                                           ])),
                                 ])),
-                      if (_chatVisible) ...[
-                        const SizedBox(height: 16),
-                        _chatCard()
-                      ],
                     ]),
               ))),
         ));
@@ -406,17 +413,22 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
           ]),
       ]));
   Widget _result(OnlineRoomState s) => SectionCard(
-      title: s.status,
-      subtitle: s.reason == 'resign'
-          ? '本局以认输结束'
-          : s.reason == 'disconnected' || s.reason == 'left'
-              ? '对手离开，对局结束'
-              : s.reason == 'score'
-                  ? '双方已确认终局计分'
-                  : '本局已结束，可保留棋盘查看',
-      child: FilledButton.tonal(
-          onPressed: _canAct ? () => _send(_network.startGame) : null,
-          child: const Text('再来一局')));
+      title: '本局结算',
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _resultDetails(s),
+        const SizedBox(height: 12),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          OutlinedButton(
+              onPressed: () => _showResult(s), child: const Text('查看对局信息')),
+          FilledButton.tonal(
+              onPressed: _canAct && !s.isReady(_network.myColor)
+                  ? () => _send(_network.startGame)
+                  : null,
+              child: Text(s.isReady(_network.myColor) ? '已准备，等待对手' : '再来一局')),
+        ]),
+        const SizedBox(height: 8),
+        const Text('双方都选择再来一局后，才会清空棋盘。'),
+      ]));
   Widget _actions(OnlineRoomState s) => SectionCard(
       title: '对局操作',
       child: Wrap(spacing: 8, runSpacing: 8, children: [
@@ -440,46 +452,93 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
               label: const Text('认输')),
         ],
         TextButton.icon(
-            onPressed: () => setState(() => _chatVisible = !_chatVisible),
+            onPressed: _openChat,
             icon: const Icon(Icons.chat_bubble_outline_rounded),
-            label: const Text('聊天')),
+            label: Text(_unread == 0 ? '聊天' : '聊天 · $_unread')),
         TextButton.icon(
             onPressed: _leave,
             icon: const Icon(Icons.exit_to_app_rounded),
             label: const Text('离开')),
       ]));
-  Widget _chatCard() => SectionCard(
-      title: '局内聊天',
-      child: Column(children: [
-        SizedBox(
-            height: 160,
-            child: ListView(
-                reverse: true,
-                children: _messages.reversed
-                    .map((m) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Text(m)))
-                    .toList())),
-        const SizedBox(height: 12),
-        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(
-              child: TextField(
-                  controller: _chat,
-                  maxLength: 100,
-                  decoration: const InputDecoration(hintText: '输入消息'))),
-          const SizedBox(width: 8),
-          IconButton.filled(
-              tooltip: '发送',
-              onPressed: _connected && !_closed
-                  ? () {
-                      final value = _chat.text.trim();
-                      if (value.isEmpty) return;
-                      _network.sendChat(value);
-                      setState(() => _messages.add('你：$value'));
-                      _chat.clear();
-                    }
-                  : null,
-              icon: const Icon(Icons.send_rounded)),
-        ]),
-      ]));
+  void _appendMessage(String message) {
+    _messages.value = [..._messages.value, message]
+        .reversed
+        .take(100)
+        .toList()
+        .reversed
+        .toList();
+  }
+
+  Future<void> _openChat() async {
+    if (_chatVisible) return;
+    setState(() {
+      _chatVisible = true;
+      _unread = 0;
+    });
+    await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        constraints: const BoxConstraints(maxWidth: 640),
+        builder: (_) => ChatSheet(
+            messages: _messages,
+            onSend: (message) async {
+              if (!_connected || _closed) return false;
+              final sent = await _network.sendChat(message);
+              if (sent && mounted) _appendMessage('你：$message');
+              return sent;
+            }));
+    if (mounted) setState(() => _chatVisible = false);
+  }
+
+  GameResultDetails _resultDetails(OnlineRoomState s) => GameResultDetails(
+        title: s.winner == null
+            ? '本局和棋'
+            : s.winner == _network.myColor
+                ? '你获胜了'
+                : '本局落败',
+        reason: '${s.status} · ${endReason(s.reason)}',
+        size: s.size,
+        moves: s.moves,
+        last: s.last,
+        players: s.players
+            .map((p) => '${p['color'] == 'black' ? '黑方' : '白方'}：${p['name']}')
+            .join(' · '),
+        score: s.score == null
+            ? null
+            : '黑 ${s.score!['black']} · 白 ${s.score!['white']}',
+      );
+
+  void _showResultIfNeeded(OnlineRoomState s) {
+    if (!s.finished) {
+      _resultNotified = false;
+      return;
+    }
+    if (_resultNotified) return;
+    _resultNotified = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _state?.finished == true) {
+        _cancelUndo();
+        _showResult(s);
+      }
+    });
+  }
+
+  Future<void> _showResult(OnlineRoomState s) => showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+              title: const Text('对局结束'),
+              content: SingleChildScrollView(child: _resultDetails(s)),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('查看棋盘')),
+                if (_canAct && !s.isReady(_network.myColor))
+                  FilledButton(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _send(_network.startGame);
+                      },
+                      child: const Text('再来一局')),
+              ]));
 }

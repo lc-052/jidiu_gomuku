@@ -642,20 +642,30 @@ class NetworkService {
 
   /// 发送聊天消息到当前房间
   /// [message] 聊天内容
-  void sendChat(String message) {
+  Future<bool> sendChat(String message) async {
     try {
       if (!isConnected || roomId == null) {
         _onErrorInternal('无法发送消息：未连接或不在房间内', 'Network');
-        return;
+        return false;
       }
-      if (message.trim().isEmpty) return;
-      _socket!.emit('chat', <String, dynamic>{
+      if (message.trim().isEmpty) return false;
+      final confirmation = Completer<bool>();
+      _socket!.emitWithAck('chat', <String, dynamic>{
         'roomId': roomId,
         'message': message.trim(),
         'sender': playerName ?? '未知用户',
+      }, ack: (data) {
+        if (!confirmation.isCompleted) {
+          confirmation.complete(data is Map && data['ok'] == true);
+        }
       });
+      final accepted =
+          await confirmation.future.timeout(const Duration(seconds: 8));
+      if (!accepted) _onErrorInternal('消息未发送成功，请重试', 'Network');
+      return accepted;
     } catch (e) {
       _onErrorInternal('发送消息失败: $e', 'Network');
+      return false;
     }
   }
 
