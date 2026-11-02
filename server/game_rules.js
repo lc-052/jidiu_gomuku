@@ -11,6 +11,15 @@ class GameRules {
     this.winner = undefined; this.komi = 7.5;
   }
   key() { return this.board.map(r=>r.map(v=>v === 'black' ? 'b' : v === 'white' ? 'w' : '.').join('')).join(''); }
+  get moveNumbers() {
+    const numbers=new Map();
+    this.history.forEach((entry,index)=>{
+      if(entry.type==='move' && this.board[entry.row][entry.col]!==null) {
+        numbers.set(entry.row*this.size+entry.col,{row:entry.row,col:entry.col,number:index+1});
+      }
+    });
+    return [...numbers.values()];
+  }
   neighbors(i) {
     const n=this.size, list=[];
     if(i>=n) list.push(i-n); if(i<n*(n-1)) list.push(i+n);
@@ -66,6 +75,10 @@ class GameRules {
     if(this.kind!=='go'||this.scoring||this.winner!==undefined) throw Error('当前不能停着');
     this.history.push({before:this.captureState(),color:this.currentPlayer,type:'pass'});
     this.passes++;this.scoring=this.passes>=2;this.lastMove=null;this.currentPlayer=other(this.currentPlayer);
+  }
+  startScoring() {
+    if(this.kind!=='go'||this.scoring||this.winner!==undefined) throw Error('当前不能数子');
+    this.scoring=true;this.dead.clear();
   }
   undo(count) {
     const removed=[];

@@ -71,6 +71,22 @@ class StorageService {
 
   // ---------- AI 难度设置 ----------
 
+  bool get showMoveNumbers => _prefs?.getBool('show_move_numbers') ?? false;
+  Future<void> saveShowMoveNumbers(bool value) async {
+    await _prefs?.setBool('show_move_numbers', value);
+  }
+
+  int get aiDelayMs {
+    final value = _prefs?.getInt('ai_delay_ms') ?? 500;
+    return [0, 500, 1000, 1500].contains(value) ? value : 500;
+  }
+
+  Future<void> saveAiDelayMs(int value) async {
+    if ([0, 500, 1000, 1500].contains(value)) {
+      await _prefs?.setInt('ai_delay_ms', value);
+    }
+  }
+
   /// 获取当前 AI 难度索引
   /// 0 = 简单, 1 = 中等, 2 = 困难
   int get difficultyIndex {

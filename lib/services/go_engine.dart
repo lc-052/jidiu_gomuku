@@ -3,10 +3,23 @@ import '../models/game_state.dart';
 class GoScore {
   final double black;
   final double white;
-  const GoScore(this.black, this.white);
-  String get result => black > white
-      ? '黑方胜 ${(black - white).toStringAsFixed(1)} 目'
-      : '白方胜 ${(white - black).toStringAsFixed(1)} 目';
+  final int blackStones, whiteStones, neutralPoints, blackDead, whiteDead;
+  final double komi;
+  final Set<Position> blackTerritory, whiteTerritory;
+  const GoScore(this.black, this.white,
+      {this.blackStones = 0,
+      this.whiteStones = 0,
+      this.neutralPoints = 0,
+      this.blackDead = 0,
+      this.whiteDead = 0,
+      this.komi = 7.5,
+      this.blackTerritory = const {},
+      this.whiteTerritory = const {}});
+  String get result => black == white
+      ? '双方和棋'
+      : black > white
+          ? '黑方胜 ${(black - white).toStringAsFixed(1)} 目'
+          : '白方胜 ${(white - black).toStringAsFixed(1)} 目';
 }
 
 /// Area scoring, no suicide, positional superko. Passes are exempt from superko.
@@ -34,6 +47,24 @@ class GoEngine {
   List<List<CellState>> get board => _copy(_board);
   int get moveCount => _history.length;
   bool get canUndo => _history.isNotEmpty;
+
+  /// Recover each surviving stone's original turn, including intervening passes.
+  /// Snapshots retain the last placement even after captures or undo.
+  Map<Position, int> get moveNumbers {
+    final numbers = <Position, int>{};
+    for (var i = 0; i < _history.length; i++) {
+      final next = i + 1 < _history.length ? _history[i + 1] : null;
+      final position = next == null ? lastMove : next.last;
+      final after = next == null ? _board : next.board;
+      if (position != null &&
+          _history[i].board[position.row][position.col] == CellState.empty &&
+          after[position.row][position.col] != CellState.empty) {
+        numbers[position] = i + 1;
+      }
+    }
+    numbers.removeWhere((p, _) => _board[p.row][p.col] == CellState.empty);
+    return Map.unmodifiable(numbers);
+  }
 
   /// Independent analysis position, retaining superko history but no undo stack.
   /// Search and background isolates never mutate the live match.
@@ -161,6 +192,27 @@ class GoEngine {
     return true;
   }
 
+  /// Inspect the current position without consuming a turn or changing history.
+  bool startScoring() {
+    if (scoring || gameState != GameState.playing) return false;
+    scoring = true;
+    error = null;
+    dead.clear();
+    return true;
+  }
+
+  void clearDead() {
+    if (scoring && gameState == GameState.playing) dead.clear();
+  }
+
+  static GoScore scorePosition(List<List<CellState>> board,
+      {Set<Position> dead = const {}, double komi = 7.5}) {
+    final engine = GoEngine(size: board.length, komi: komi);
+    engine._board = engine._copy(board);
+    engine.dead.addAll(dead);
+    return engine.score();
+  }
+
   void toggleDead(int row, int col) {
     if (row < 0 || col < 0 || row >= size || col >= size) return;
     if (!scoring || _board[row][col] == CellState.empty) return;
@@ -174,19 +226,26 @@ class GoEngine {
 
   GoScore score() {
     final b = _copy(_board);
+    int blackDead = 0, whiteDead = 0;
     for (final p in dead) {
+      if (b[p.row][p.col] == CellState.black) blackDead++;
+      if (b[p.row][p.col] == CellState.white) whiteDead++;
       b[p.row][p.col] = CellState.empty;
     }
     double black = 0, white = komi;
+    int blackStones = 0, whiteStones = 0, neutralPoints = 0;
+    final blackTerritory = <Position>{}, whiteTerritory = <Position>{};
     final visited = <Position>{};
     for (int r = 0; r < size; r++) {
       for (int c = 0; c < size; c++) {
         if (b[r][c] == CellState.black) {
           black++;
+          blackStones++;
           continue;
         }
         if (b[r][c] == CellState.white) {
           white++;
+          whiteStones++;
           continue;
         }
         final p = Position(row: r, col: c);
@@ -204,13 +263,25 @@ class GoEngine {
         if (borders.length == 1) {
           if (borders.first == CellState.black) {
             black += region.length;
+            blackTerritory.addAll(region);
           } else {
             white += region.length;
+            whiteTerritory.addAll(region);
           }
+        } else {
+          neutralPoints += region.length;
         }
       }
     }
-    return GoScore(black, white);
+    return GoScore(black, white,
+        blackStones: blackStones,
+        whiteStones: whiteStones,
+        neutralPoints: neutralPoints,
+        blackDead: blackDead,
+        whiteDead: whiteDead,
+        komi: komi,
+        blackTerritory: Set.unmodifiable(blackTerritory),
+        whiteTerritory: Set.unmodifiable(whiteTerritory));
   }
 
   void resume() {
@@ -223,8 +294,11 @@ class GoEngine {
   void finish() {
     if (!scoring || gameState != GameState.playing) return;
     final result = score();
-    gameState =
-        result.black > result.white ? GameState.blackWon : GameState.whiteWon;
+    gameState = result.black == result.white
+        ? GameState.draw
+        : result.black > result.white
+            ? GameState.blackWon
+            : GameState.whiteWon;
     scoring = false;
   }
 

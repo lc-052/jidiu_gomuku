@@ -6,11 +6,13 @@ import subprocess
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--web", action="store_true", help="Include the built Flutter website")
+parser.add_argument("--web-dir", type=Path, help="Use a separately built Flutter website directory")
+parser.add_argument("--output", type=Path, help="Write the archive to a versioned release path")
 args = parser.parse_args()
 
 root = Path(__file__).resolve().parents[1]
-output = root / "build" / "deploy" / ("jidiu-qishi-web-1panel.zip" if args.web else "jidiu-gomuku-1panel.zip")
-web = root / "build" / "web"
+output = args.output.resolve() if args.output else root / "build" / "deploy" / ("jidiu-qishi-web-1panel.zip" if args.web else "jidiu-gomuku-1panel.zip")
+web = args.web_dir.resolve() if args.web_dir else root / "build" / "web"
 if args.web and not (web / "index.html").is_file():
     parser.error("Run flutter build web --release --no-web-resources-cdn first")
 if args.web:

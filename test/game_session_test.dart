@@ -18,7 +18,7 @@ void main() {
     expect(session.thinking, true);
     session.play(0, 0);
     expect(session.moves, 0);
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 600));
     expect(session.moves, 1);
     expect(session.current, Player.white);
     session.play(0, 0);
@@ -26,7 +26,7 @@ void main() {
     session.undo();
     expect(session.moves, 1);
     expect(session.current, Player.white);
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 600));
     expect(session.moves, 1);
     session.reset();
     expect(session.thinking, true);

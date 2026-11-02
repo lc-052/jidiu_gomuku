@@ -29,6 +29,11 @@ class GameScreen extends StatefulWidget {
 class _GameScreenState extends State<GameScreen> {
   GameSession? _session;
   bool _resultNotified = false;
+  double _komi = 7.5;
+  late Difficulty _difficulty =
+      Difficulty.values[StorageService().difficultyIndex.clamp(0, 2)];
+  late int _aiDelayMs = StorageService().aiDelayMs;
+  late bool _showMoveNumbers = StorageService().showMoveNumbers;
   late int _size = widget.kind == GameKind.go ? 9 : 15;
   @override
   void dispose() {
@@ -66,10 +71,24 @@ class _GameScreenState extends State<GameScreen> {
   void _start() {
     _session?.dispose();
     _resultNotified = false;
-    final session =
-        GameSession(kind: widget.kind, size: _size, ai: widget.gameMode == 1);
+    final session = GameSession(
+        kind: widget.kind,
+        size: _size,
+        ai: widget.gameMode == 1,
+        komi: _komi,
+        difficulty: _difficulty,
+        aiDelay: Duration(milliseconds: _aiDelayMs));
+    if (session.ai) {
+      StorageService().saveDifficultyIndex(_difficulty.index);
+      StorageService().saveAiDelayMs(_aiDelayMs);
+    }
     session.addListener(_onSessionChanged);
     setState(() => _session = session);
+  }
+
+  void _setShowMoveNumbers(bool value) {
+    setState(() => _showMoveNumbers = value);
+    StorageService().saveShowMoveNumbers(value);
   }
 
   void _onSessionChanged() {
@@ -170,6 +189,53 @@ class _GameScreenState extends State<GameScreen> {
                                   onSelected: (_) =>
                                       setState(() => _size = size)),
                           ]),
+                          if (widget.kind == GameKind.go) ...[
+                            const SizedBox(height: 20),
+                            const Text('白方贴目'),
+                            const SizedBox(height: 8),
+                            Wrap(spacing: 8, runSpacing: 8, children: [
+                              for (final komi in [0.0, 5.5, 6.5, 7.5])
+                                ChoiceChip(
+                                    label: Text(komi == 0 ? '不贴目' : '$komi 目'),
+                                    selected: _komi == komi,
+                                    onSelected: (_) =>
+                                        setState(() => _komi = komi)),
+                            ]),
+                          ],
+                          SwitchListTile.adaptive(
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('显示棋子手数'),
+                              subtitle: const Text('在棋子上显示落子序号，对局中可随时切换'),
+                              value: _showMoveNumbers,
+                              onChanged: _setShowMoveNumbers),
+                          if (widget.gameMode == 1) ...[
+                            const SizedBox(height: 16),
+                            const Text('AI 难度'),
+                            const SizedBox(height: 8),
+                            Wrap(spacing: 8, runSpacing: 8, children: [
+                              for (final difficulty in Difficulty.values)
+                                ChoiceChip(
+                                    label: Text(difficulty.displayName),
+                                    selected: _difficulty == difficulty,
+                                    onSelected: (_) => setState(
+                                        () => _difficulty = difficulty)),
+                            ]),
+                            const SizedBox(height: 20),
+                            const Text('AI 落子等待'),
+                            const SizedBox(height: 8),
+                            Wrap(spacing: 8, runSpacing: 8, children: [
+                              for (final delay in [0, 500, 1000, 1500])
+                                ChoiceChip(
+                                    label: Text(delay == 0
+                                        ? '立即'
+                                        : '${delay / 1000} 秒'),
+                                    selected: _aiDelayMs == delay,
+                                    onSelected: (_) =>
+                                        setState(() => _aiDelayMs = delay)),
+                            ]),
+                            const SizedBox(height: 8),
+                            const Text('你落子后，电脑等待所选时间再开始思考。'),
+                          ],
                           const SizedBox(height: 24),
                           FilledButton.icon(
                               onPressed: _start,
@@ -182,13 +248,24 @@ class _GameScreenState extends State<GameScreen> {
   Widget _rules() => SectionCard(
       title: '棋局约定',
       child: Text(widget.kind == GameKind.go
-          ? '黑方先行，白贴 7.5 目。采用面积计分（活子 + 围空），禁止自杀与全局同形。连续两次停着后核对死子并计分。人机难度与执子可在设置中选择。'
-          : '自由五子棋，不设禁手。横、竖、斜向率先连成五子即获胜。人机模式使用设置中的难度与执子偏好。'));
+          ? '黑方先行，白贴 ${_komi.toStringAsFixed(1)} 目。采用面积计分（活子 + 围空），禁止自杀与全局同形。可点击「数子」核对死子、查看围空归属，再确认结算或继续下棋；连续两次停着也会进入数子。死活需手动核对。人机难度与等待时间在开局页选择，执子偏好可在设置中选择。'
+          : '自由五子棋，不设禁手。横、竖、斜向率先连成五子即获胜。人机难度与等待时间在开局页选择，执子偏好可在设置中选择。'));
 
   Widget _game(GameSession session) =>
       LayoutBuilder(builder: (context, constraints) {
         final wide = constraints.maxWidth >= 900;
+        final score = session.isGo &&
+                (session.scoring ||
+                    (session.over && session.resignedWinner == null))
+            ? session.go.score()
+            : null;
         final board = SectionCard(
+            title: '棋盘',
+            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Text('手数'),
+              Switch.adaptive(
+                  value: _showMoveNumbers, onChanged: _setShowMoveNumbers),
+            ]),
             child: AspectRatio(
                 aspectRatio: 1,
                 child: BoardWidget(
@@ -196,6 +273,8 @@ class _GameScreenState extends State<GameScreen> {
                   gameState: session.state,
                   currentPlayer: session.current,
                   lastMove: session.last,
+                  moveNumbers:
+                      _showMoveNumbers ? session.moveNumbers : const {},
                   winningPositions: !session.isGo &&
                           session.over &&
                           session.resignedWinner == null
@@ -210,6 +289,8 @@ class _GameScreenState extends State<GameScreen> {
                       : const {},
                   themeIndex: context.watch<ThemeNotifier>().chosenThemeIndex,
                   markedPositions: session.isGo ? session.go.dead : const {},
+                  blackTerritory: score?.blackTerritory ?? const {},
+                  whiteTerritory: score?.whiteTerritory ?? const {},
                   onTapCell: (r, c) {
                     final before = session.moves;
                     final error = session.play(r, c);
@@ -265,7 +346,7 @@ class _GameScreenState extends State<GameScreen> {
               }),
           const SizedBox(height: 16),
           AdaptiveCardPair(
-              breakpoint: 0,
+              breakpoint: 400,
               first: MoveSummaryCard(session: session),
               second: _rules()),
         ]);

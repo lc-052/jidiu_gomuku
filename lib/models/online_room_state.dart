@@ -1,5 +1,6 @@
 import 'game_kind.dart';
 import 'game_state.dart';
+import '../services/go_engine.dart';
 
 /// Complete server-authoritative room snapshot (protocol 2).
 class OnlineRoomState {
@@ -17,6 +18,7 @@ class OnlineRoomState {
   final Map<String, dynamic> captures;
   final Map<String, dynamic>? score;
   final bool undoPending;
+  final Map<Position, int> moveNumbers;
   OnlineRoomState._(Map<String, dynamic> data)
       : roomId = data['roomId'] as String,
         roomName = data['roomName'] as String,
@@ -25,6 +27,11 @@ class OnlineRoomState {
         size = data['size'] as int,
         revision = data['revision'] as int,
         moves = data['moveCount'] as int,
+        moveNumbers = Map.unmodifiable({
+          for (final p in (data['moveNumbers'] as List? ?? const []))
+            Position(row: p['row'] as int, col: p['col'] as int):
+                p['number'] as int,
+        }),
         passes = data['passes'] as int,
         current =
             data['currentPlayer'] == 'white' ? Player.white : Player.black,
@@ -73,6 +80,9 @@ class OnlineRoomState {
   bool isReady(Player color) =>
       players.any((p) => p['color'] == colorKey(color) && p['ready'] == true);
   bool get finished => phase == 'finished';
+  late final GoScore? scoringDetails = kind == GameKind.go && score != null
+      ? GoEngine.scorePosition(board, dead: dead)
+      : null;
   String get status => phase == 'waiting'
       ? '等待双方准备'
       : phase == 'scoring'

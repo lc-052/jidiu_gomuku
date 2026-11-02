@@ -88,6 +88,70 @@ void main() {
       theme: ThemePalette.all.first.materialTheme(Brightness.light),
       home: OnlineGameScreen(key: ValueKey(n), network: n));
   testWidgets(
+      'online stone numbers use server snapshots and a local display toggle',
+      (tester) async {
+    await StorageService().saveShowMoveNumbers(false);
+    final data = position();
+    data['board'][0][0] = 'black';
+    data['moveCount'] = 1;
+    data['moveNumbers'] = [
+      {'row': 0, 'col': 0, 'number': 1}
+    ];
+    final n = PreviewNetwork(data);
+    await tester.pumpWidget(wrap(n));
+    await tester.pumpAndSettle();
+    expect(tester.widget<BoardWidget>(find.byType(BoardWidget)).moveNumbers,
+        isEmpty);
+    await tester.ensureVisible(find.text('显示手数'));
+    await tester.tap(find.text('显示手数'));
+    await tester.pump();
+    expect(tester.widget<BoardWidget>(find.byType(BoardWidget)).moveNumbers,
+        {const Position(row: 0, col: 0): 1});
+    expect(n.actions, isEmpty);
+    final next = position(revision: 2);
+    n.emit(next); // Undo arrives with no stones or numbers.
+    await tester.pump();
+    expect(tester.widget<BoardWidget>(find.byType(BoardWidget)).moveNumbers,
+        isEmpty);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await StorageService().saveShowMoveNumbers(false);
+  });
+  testWidgets(
+      'count and clear send revision-checked actions without local mutation',
+      (tester) async {
+    final data = position();
+    data['board'][0][0] = 'black';
+    data['moveCount'] = 1;
+    final n = PreviewNetwork(data);
+    await tester.pumpWidget(wrap(n));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('数子'));
+    await tester.tap(find.text('数子'));
+    await tester.pump();
+    expect(n.actions, ['startScoring:1']);
+    expect(n.latestState!.phase, 'playing');
+    final next = position(phase: 'scoring', revision: 2);
+    next['board'][0][0] = 'black';
+    next['dead'] = [
+      {'row': 0, 'col': 0}
+    ];
+    n.emit(next);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('清除死子标记'));
+    await tester.tap(find.text('清除死子标记'));
+    await tester.pump();
+    expect(n.actions.last, 'clearDead:2');
+    expect(
+        tester
+            .widget<BoardWidget>(find.byType(BoardWidget))
+            .markedPositions
+            .length,
+        1);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets(
       'server-authoritative boards, ready and scoring cards fit phone and desktop',
       (tester) async {
     for (final dimensions in [const Size(360, 800), const Size(1280, 900)]) {

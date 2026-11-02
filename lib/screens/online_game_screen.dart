@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../widgets/go_score_details.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import '../models/game_kind.dart';
@@ -36,6 +37,7 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
   final _messages = ValueNotifier<List<String>>([]);
   int _unread = 0;
   bool _resultNotified = false;
+  late bool _showMoveNumbers = StorageService().showMoveNumbers;
   bool get _active => _state?.phase == 'playing' || _state?.phase == 'scoring';
   bool get _canAct =>
       _connected && !_closed && !_pending && _network.roomId != null;
@@ -310,7 +312,16 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                                             : GameState.playing,
                                         currentPlayer: s.current,
                                         lastMove: s.last,
+                                        moveNumbers: _showMoveNumbers
+                                            ? s.moveNumbers
+                                            : const {},
                                         markedPositions: s.dead,
+                                        blackTerritory:
+                                            s.scoringDetails?.blackTerritory ??
+                                                const {},
+                                        whiteTerritory:
+                                            s.scoringDetails?.whiteTerritory ??
+                                                const {},
                                         themeIndex: StorageService().themeIndex,
                                         onTapCell: _tap))),
                             second: Column(
@@ -390,11 +401,10 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                   : null,
           child: Text(s.isReady(_network.myColor) ? '已准备' : '准备')));
   Widget _scoring(OnlineRoomState s) => SectionCard(
-      title: s.finished ? '面积计分' : '终局核对',
+      title: s.finished ? '数子结果' : '数子 · 双方核对',
       subtitle: '白贴 7.5 目。点击棋子标记或取消整块死子；修改后双方需重新确认。有争议可继续下棋。',
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('黑 ${s.score?['black']} · 白 ${s.score?['white']}',
-            style: Theme.of(context).textTheme.titleLarge),
+        if (s.scoringDetails != null) GoScoreDetails(score: s.scoringDetails!),
         const SizedBox(height: 12),
         if (!s.finished)
           Wrap(spacing: 8, runSpacing: 8, children: [
@@ -410,6 +420,12 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
                     ? () => _send(() => _network.sendRoomAction('resumePlay'))
                     : null,
                 child: const Text('继续下棋')),
+            TextButton(
+                onPressed: _canAct && s.dead.isNotEmpty
+                    ? () => _send(() => _network
+                        .sendRoomAction('clearDead', {'revision': s.revision}))
+                    : null,
+                child: const Text('清除死子标记')),
           ]),
       ]));
   Widget _result(OnlineRoomState s) => SectionCard(
@@ -432,7 +448,22 @@ class _OnlineGameScreenState extends State<OnlineGameScreen> {
   Widget _actions(OnlineRoomState s) => SectionCard(
       title: '对局操作',
       child: Wrap(spacing: 8, runSpacing: 8, children: [
+        FilterChip(
+            label: const Text('显示手数'),
+            selected: _showMoveNumbers,
+            onSelected: (value) {
+              setState(() => _showMoveNumbers = value);
+              StorageService().saveShowMoveNumbers(value);
+            }),
         if (_active) ...[
+          if (s.kind == GameKind.go && s.phase == 'playing')
+            FilledButton.icon(
+                onPressed: _canAct
+                    ? () => _send(() => _network.sendRoomAction(
+                        'startScoring', {'revision': s.revision}))
+                    : null,
+                icon: const Icon(Icons.calculate_outlined),
+                label: const Text('数子')),
           if (s.kind == GameKind.go && s.phase == 'playing')
             FilledButton.tonalIcon(
                 onPressed: _canAct && s.current == _network.myColor

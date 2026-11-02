@@ -15,6 +15,8 @@ class BoardWidget extends StatelessWidget {
   final int themeIndex;
   final Set<Position> markedPositions;
   final Set<Position> winningPositions;
+  final Set<Position> blackTerritory, whiteTerritory;
+  final Map<Position, int> moveNumbers;
 
   const BoardWidget({
     super.key,
@@ -26,6 +28,9 @@ class BoardWidget extends StatelessWidget {
     this.themeIndex = 0,
     this.markedPositions = const {},
     this.winningPositions = const {},
+    this.blackTerritory = const {},
+    this.whiteTerritory = const {},
+    this.moveNumbers = const {},
   });
 
   @override
@@ -81,6 +86,11 @@ class BoardWidget extends StatelessWidget {
               child: CustomPaint(
                 size: Size(totalSize, totalSize),
                 painter: _BoardPainter(
+                  numberStyle: Theme.of(context).textTheme.labelSmall ??
+                      const TextStyle(),
+                  moveNumbers: moveNumbers,
+                  blackTerritory: blackTerritory,
+                  whiteTerritory: whiteTerritory,
                   winningPositions: winningPositions,
                   markedPositions: markedPositions,
                   board: board,
@@ -105,6 +115,9 @@ class BoardWidget extends StatelessWidget {
 // ========== Painter ==========
 
 class _BoardPainter extends CustomPainter {
+  final TextStyle numberStyle;
+  final Map<Position, int> moveNumbers;
+  final Set<Position> blackTerritory, whiteTerritory;
   final Set<Position> winningPositions;
   final Set<Position> markedPositions;
   final List<List<CellState>> board;
@@ -118,6 +131,10 @@ class _BoardPainter extends CustomPainter {
   final int n;
 
   _BoardPainter({
+    required this.numberStyle,
+    required this.moveNumbers,
+    required this.blackTerritory,
+    required this.whiteTerritory,
     required this.winningPositions,
     required this.markedPositions,
     required this.board,
@@ -168,6 +185,28 @@ class _BoardPainter extends CustomPainter {
         for (final c in [inset, n ~/ 2, n - 1 - inset]) {
           drawDot(r, c);
         }
+      }
+    }
+
+    // Small squares distinguish counted territory from stones. Dead stones
+    // retain their cross marks; their intersections are counted underneath.
+    for (final territory in [blackTerritory, whiteTerritory]) {
+      final color = identical(territory, blackTerritory)
+          ? const Color(0xFF242424)
+          : const Color(0xFFFAFAFA);
+      for (final p in territory) {
+        final rect = Rect.fromCenter(
+            center:
+                Offset(origin + p.col * cellSize, origin + p.row * cellSize),
+            width: cellSize * .28,
+            height: cellSize * .28);
+        canvas.drawRect(rect, Paint()..color = color);
+        canvas.drawRect(
+            rect,
+            Paint()
+              ..color = const Color(0xFF777777)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = .6);
       }
     }
 
@@ -234,6 +273,39 @@ class _BoardPainter extends CustomPainter {
                 ..strokeWidth = 3
                 ..style = PaintingStyle.stroke);
         }
+        final number = moveNumbers[Position(row: r, col: c)];
+        final isLast = lastMove?.row == r && lastMove?.col == c;
+        if (number != null) {
+          final label = TextPainter(
+              text: TextSpan(
+                  text: '$number',
+                  style: numberStyle.copyWith(
+                      color:
+                          cell == CellState.black ? Colors.white : Colors.black,
+                      fontWeight: FontWeight.w600,
+                      fontSize: stoneRadius * 1.05)),
+              textDirection: TextDirection.ltr)
+            ..layout();
+          final maxWidth = stoneRadius * 1.65;
+          final scale = math.min(1.0, maxWidth / label.width);
+          canvas.save();
+          canvas.translate(cx, cy);
+          canvas.scale(scale);
+          label.paint(canvas, Offset(-label.width / 2, -label.height / 2));
+          canvas.restore();
+          label.dispose();
+          if (isLast) {
+            canvas.drawCircle(
+                Offset(cx, cy),
+                stoneRadius * .92,
+                Paint()
+                  ..color = cell == CellState.black
+                      ? const Color(0xFFF1DBAB)
+                      : const Color(0xFF7C6744)
+                  ..style = PaintingStyle.stroke
+                  ..strokeWidth = 1.5);
+          }
+        }
         if (markedPositions.contains(Position(row: r, col: c))) {
           final mark = Paint()
             ..color = palette.primaryColor
@@ -243,7 +315,7 @@ class _BoardPainter extends CustomPainter {
           canvas.drawLine(Offset(cx - d, cy + d), Offset(cx + d, cy - d), mark);
         }
         // ---------- 最后一步标记 ----------
-        if (lastMove != null && lastMove!.row == r && lastMove!.col == c) {
+        if (isLast && number == null) {
           canvas.drawCircle(
             Offset(cx, cy),
             stoneRadius * 0.2,

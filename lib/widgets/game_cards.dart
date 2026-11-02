@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/game_session.dart';
 import '../models/game_state.dart';
 import 'section_card.dart';
+import 'go_score_details.dart';
 
 class PlayerStatusCard extends StatelessWidget {
   final GameSession session;
@@ -53,6 +54,11 @@ class GameActionsCard extends StatelessWidget {
             icon: const Icon(Icons.undo_rounded),
             label: const Text('悔棋')),
         if (session.isGo && !session.scoring && !session.over)
+          FilledButton.icon(
+              onPressed: session.canScore ? session.startScoring : null,
+              icon: const Icon(Icons.calculate_outlined),
+              label: const Text('数子')),
+        if (session.isGo && !session.scoring && !session.over)
           FilledButton.tonalIcon(
               onPressed: session.thinking ||
                       (session.ai && session.current != session.human)
@@ -84,26 +90,25 @@ class GoScoringCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final score = session.go.score();
     return SectionCard(
-        title: session.over ? '本局结算' : '终局核对',
+        title: session.over ? '数子结果' : '数子 · 核对死子',
         subtitle: session.over
             ? '面积计分结果'
             : session.ai
                 ? '点击棋子标记或取消整块死子（叉号），核对后结算。未自动判定死活，也可继续下棋。'
                 : '点击棋子标记或取消整块死子（叉号）。双方确认后结算；有争议可继续下棋。',
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(
-              '黑 ${score.black.toStringAsFixed(1)} · 白 ${score.white.toStringAsFixed(1)}（含贴 7.5）',
-              style: Theme.of(context).textTheme.titleMedium),
+          GoScoreDetails(score: score),
           const SizedBox(height: 12),
-          if (session.over)
-            Text(score.result)
-          else
+          if (!session.over)
             Wrap(spacing: 8, runSpacing: 8, children: [
               FilledButton(
                   onPressed: session.finish,
                   child: Text(session.ai ? '确认计分，结算' : '双方确认，结算')),
               OutlinedButton(
                   onPressed: session.resume, child: const Text('继续下棋')),
+              TextButton(
+                  onPressed: session.go.dead.isEmpty ? null : session.clearDead,
+                  child: const Text('清除死子标记')),
             ]),
         ]));
   }

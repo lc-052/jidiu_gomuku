@@ -80,13 +80,17 @@ void main() {
     }
     theme.setThemeIndex(0);
     await StorageService().savePreferredColor('black');
+    await StorageService().saveShowMoveNumbers(true);
+    await StorageService().saveAiDelayMs(500);
     await tester.pumpWidget(wrap(const GameScreen(
         key: ValueKey('go-ai'), gameMode: 1, kind: GameKind.go)));
     await tester.pumpAndSettle();
+    await capture('go-ai-setup');
+    await tester.ensureVisible(find.text('开始对弈'));
     await tester.tap(find.text('开始对弈'));
     await tester.pumpAndSettle();
     await tester.tapAt(tester.getCenter(find.byType(BoardWidget)));
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 600));
     await tester
         .runAsync(() => Future<void>.delayed(const Duration(seconds: 1)));
     await tester.pumpAndSettle();
@@ -99,12 +103,29 @@ void main() {
     await capture('go-light');
     theme.setThemeMode(ThemeMode.dark);
     await capture('go-dark');
+    theme.setThemeMode(ThemeMode.light);
+    for (final p in [(0, 1), (8, 8), (1, 0), (7, 8), (4, 4)]) {
+      tester
+          .widget<BoardWidget>(find.byType(BoardWidget))
+          .onTapCell(p.$1, p.$2);
+      await tester.pump();
+    }
+    await tester.ensureVisible(find.text('数子'));
+    await tester.tap(find.text('数子'));
+    await capture('go-scoring-desktop');
     tester.view.physicalSize = const Size(390, 844);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('数子 · 核对死子'));
+    await capture('go-scoring-mobile');
+    theme.setThemeMode(ThemeMode.dark);
     await tester.pumpWidget(wrap(const SettingsScreen()));
     await capture('settings-dark-mobile');
     theme.setThemeMode(ThemeMode.light);
     await tester.pumpWidget(wrap(const MainMenuScreen()));
     await capture('home-light-mobile');
+    await tester.pumpWidget(wrap(const GameScreen(
+        key: ValueKey('go-ai-setup-mobile'), gameMode: 1, kind: GameKind.go)));
+    await capture('go-ai-setup-mobile');
     await tester.pumpWidget(const SizedBox.shrink());
     theme.dispose();
     tester.view.resetPhysicalSize();

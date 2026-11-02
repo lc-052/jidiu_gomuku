@@ -27,6 +27,10 @@ void main() {
         gameState: GameState.playing,
         currentPlayer: Player.black,
         lastMove: const Position(row: 7, col: 7),
+        moveNumbers: {
+          const Position(row: 7, col: 7): 361,
+          const Position(row: 3, col: 3): 2
+        },
         themeIndex: theme,
         onTapCell: (r, c) {},
       )));

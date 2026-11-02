@@ -18,7 +18,7 @@ function createGameServer(options={}) {
     const g=room.game;
     return {roomId:room.id,roomName:room.name,kind:g.kind,size:g.size,phase:room.phase,
       board:g.board,currentPlayer:g.currentPlayer,passes:g.passes,captures:g.captures,
-      moveCount:g.history.length,lastMove:g.lastMove,dead:[...g.dead].map(p=>({row:Math.floor(p/g.size),col:p%g.size})),
+      moveCount:g.history.length,moveNumbers:g.moveNumbers,lastMove:g.lastMove,dead:[...g.dead].map(p=>({row:Math.floor(p/g.size),col:p%g.size})),
       players:room.players.map(id=>{const p=players.get(id);return {name:p.name,color:p.color,ready:p.ready};}),
       confirmations:[...room.confirmations].map(id=>players.get(id)?.color).filter(Boolean),
       score:room.phase==='scoring'||room.result?.reason==='score'?g.score():null,
@@ -149,6 +149,19 @@ function createGameServer(options={}) {
       const {room}=turn(socket);room.game.pass();cancelUndo(room);
       if(room.game.scoring) {room.phase='scoring';room.confirmations.clear();}
       publish(room);
+    });
+    on('startScoring',d=>{
+      const {room}=member(socket);
+      if(room.phase!=='playing') throw Error('当前不能数子');
+      if(d.revision!==room.revision) throw Error('棋局已更新，请核对后重试');
+      room.game.startScoring();cancelUndo(room);
+      room.phase='scoring';room.confirmations.clear();publish(room);
+    });
+    on('clearDead',d=>{
+      const {room}=member(socket);
+      if(room.phase!=='scoring') throw Error('当前不在终局核对阶段');
+      if(d.revision!==room.revision) throw Error('棋局已更新，请核对后重试');
+      room.game.dead.clear();room.confirmations.clear();publish(room);
     });
     on('markDead',d=>{
       const {room}=member(socket);

@@ -80,6 +80,10 @@ void main() {
     await a.wait((s) => s.moves == count + 1);
     await b.wait((s) => s.moves == count + 1);
     expect(a.network.latestState!.board, b.network.latestState!.board);
+    expect(a.network.latestState!.moveNumbers[Position(row: row, col: col)],
+        count + 1);
+    expect(
+        a.network.latestState!.moveNumbers, b.network.latestState!.moveNumbers);
   }
 
   test('register once, both clients agree on Gomoku turns, undo, chat and win',
@@ -177,6 +181,46 @@ void main() {
     expect(endA.reason, 'score');
     expect(endA.score, endB.score);
     expect(endA.winner, Player.white);
+  });
+  test(
+      'manual count synchronizes, rejects stale packets and resets confirmations',
+      () async {
+    final (a, b) = await room(GameKind.go);
+    await move(a, a, b, 0, 0);
+    final original = a.network.latestState!;
+    // Either player may inspect; both must still confirm before ending.
+    a.network.sendRoomAction('startScoring', {'revision': original.revision});
+    await a.wait((s) => s.phase == 'scoring');
+    await b.wait((s) => s.phase == 'scoring');
+    expect(b.network.latestState!.moves, original.moves);
+    expect(b.network.latestState!.current, original.current);
+    expect(b.network.latestState!.last, original.last);
+    final staleError = b.errors.stream.first;
+    b.network.sendRoomAction(
+        'markDead', {'row': 0, 'col': 0, 'revision': original.revision});
+    expect(await staleError, contains('更新'));
+    b.network.sendRoomAction('markDead',
+        {'row': 0, 'col': 0, 'revision': b.network.latestState!.revision});
+    await a.wait((s) => s.dead.isNotEmpty);
+    a.network.sendRoomAction(
+        'confirmScore', {'revision': a.network.latestState!.revision});
+    await b.wait((s) => s.confirmations.length == 1);
+    b.network.sendRoomAction(
+        'clearDead', {'revision': b.network.latestState!.revision});
+    await a.wait((s) =>
+        s.dead.isEmpty &&
+        s.confirmations.isEmpty &&
+        s.revision > original.revision + 2);
+    await b.wait((s) =>
+        s.dead.isEmpty &&
+        s.confirmations.isEmpty &&
+        s.revision > original.revision + 2);
+    expect(a.network.latestState!.finished, false);
+    b.network.sendRoomAction('resumePlay');
+    await a.wait((s) => s.phase == 'playing');
+    await b.wait((s) => s.phase == 'playing');
+    await move(b, a, b, 8, 8);
+    expect(a.network.latestState!.moves, 2);
   });
   for (final size in [13, 19]) {
     test('Go $size-line board is shared and disconnection closes the match',

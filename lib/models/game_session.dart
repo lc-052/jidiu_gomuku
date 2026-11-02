@@ -15,6 +15,8 @@ class GameSession extends ChangeNotifier {
   final int size;
   final Player human;
   final GoMoveChooser goMoveChooser;
+  final Difficulty difficulty;
+  final Duration aiDelay;
   late final GameEngine gomoku;
   late final GoEngine go;
   Timer? _timer;
@@ -26,11 +28,17 @@ class GameSession extends ChangeNotifier {
   GameSession(
       {required this.kind,
       required this.size,
+      double komi = 7.5,
       this.ai = false,
+      Difficulty? difficulty,
+      this.aiDelay = const Duration(milliseconds: 500),
       this.goMoveChooser = GoAIService.chooseMove})
-      : human = StorageService().preferredColor {
+      : difficulty = difficulty ??
+            Difficulty.values[StorageService().difficultyIndex.clamp(0, 2)],
+        human = StorageService().preferredColor {
+    if (aiDelay.isNegative) throw ArgumentError.value(aiDelay, 'aiDelay');
     if (kind == GameKind.go) {
-      go = GoEngine(size: size);
+      go = GoEngine(size: size, komi: komi);
     } else {
       gomoku = GameEngine(
           boardSize: BoardSize.values.firstWhere((b) => b.size == size));
@@ -48,6 +56,14 @@ class GameSession extends ChangeNotifier {
   bool get over => state != GameState.playing;
   bool get scoring => isGo && go.scoring;
   int get moves => isGo ? go.moveCount : gomoku.moveHistory.length;
+  Map<Position, int> get moveNumbers {
+    if (isGo) return go.moveNumbers;
+    final history = gomoku.moveHistory;
+    return {
+      for (var i = 0; i < history.length; i++) history[i].position: i + 1
+    };
+  }
+
   Position? get last => isGo
       ? go.lastMove
       : (gomoku.moveHistory.isEmpty ? null : gomoku.moveHistory.last.position);
@@ -92,6 +108,22 @@ class GameSession extends ChangeNotifier {
   void finish() {
     if (!isGo) return;
     go.finish();
+    notifyListeners();
+  }
+
+  bool get canScore =>
+      isGo && !over && !scoring && !thinking && (!ai || current == human);
+
+  void startScoring() {
+    if (!canScore) return;
+    _cancelAi();
+    go.startScoring();
+    notifyListeners();
+  }
+
+  void clearDead() {
+    if (!scoring || over) return;
+    go.clearDead();
     notifyListeners();
   }
 
@@ -147,12 +179,11 @@ class GameSession extends ChangeNotifier {
     final revision = ++_revision;
     aiError = null;
     thinking = true;
-    _timer = Timer(const Duration(milliseconds: 350), () async {
+    _timer = Timer(aiDelay, () async {
       if (_disposed || revision != _revision || over || scoring) return;
       if (isGo) {
         try {
-          final move = await goMoveChooser(go.fork(),
-              Difficulty.values[StorageService().difficultyIndex.clamp(0, 2)]);
+          final move = await goMoveChooser(go.fork(), difficulty);
           if (_disposed || revision != _revision || over || scoring) return;
           if (move == null) {
             go.pass();
@@ -169,8 +200,7 @@ class GameSession extends ChangeNotifier {
       }
       final service = AIService(
           boardSize: gomoku.boardSize,
-          difficulty:
-              Difficulty.values[StorageService().difficultyIndex.clamp(0, 2)],
+          difficulty: difficulty,
           aiPlayer: human.opponent());
       final move = service.getBestMove(gomoku, human.opponent());
       if (move != null) gomoku.makeMove(move.row, move.col);

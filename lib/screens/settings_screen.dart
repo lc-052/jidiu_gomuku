@@ -35,7 +35,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           children: [
                             SectionCard(
                                 title: '人机练习',
-                                subtitle: '五子棋与围棋难度',
+                                subtitle: '默认难度，开局时也可调整',
                                 child:
                                     Wrap(spacing: 8, runSpacing: 8, children: [
                                   for (final d in Difficulty.values)
